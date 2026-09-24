@@ -141,7 +141,7 @@ Plugins are optional; the bot starts with none. An enabled plugin must have ever
 | `tts` | file hosting | `COMFYUI_URL`, `TTS_VOICES` |
 | `cat_pic` | `CAT_PIC_ROAST_PROMPT` | `VISION_API_URL` |
 | `paste` | `GIST_URL`, `GIST_TOKEN`, `PASTE_SAFETY_POLICY` | `SAFETY_REVIEW_URL` |
-| `stt`, `vision` | | `WHISPER_URL`; `VISION_API_URL`, `VISION_API_KEY` |
+| `stt`, `vision` | | `WHISPER_URL`; `VISION_API_URL`, `VISION_API_KEY`, `VISION_MAX_SIDE` (default 1536: larger images are shrunk to fit the model) |
 | `wikipedia`, `musicinfo`, `youtube`, `datetime`, `weather` | | |
 
 Tools that run a safety review (`musicgen`, `videogen`, `paste`, `sandbox`) also require `SAFETY_REVIEW_PREAMBLE` unless `SAFETY_REVIEW_MODE` is `score`. `examples/chatbot.yml` lists every setting in its `env:` section, with the default text of every prompt and policy.

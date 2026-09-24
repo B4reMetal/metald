@@ -6,6 +6,8 @@
 import os
 import re
 import base64
+import shutil
+import subprocess
 import urllib.request
 
 from metald_tools import chat, toollog, urlguard
@@ -38,12 +40,35 @@ def fetch_image(source: str) -> tuple[bytes, str]:
         mime = resp.headers.get_content_type() or "image/jpeg"
         return data, mime
 
+MAX_SIDE = int(os.environ.get("VISION_MAX_SIDE", "1536"))
+
+def fit_for_model(image_bytes: bytes, mime: str) -> tuple:
+    """Shrink an image to at most MAX_SIDE pixels on its longest side, as JPEG,
+    so it fits the model's vision token budget. Returns the input unchanged if
+    ffmpeg is missing or fails."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or MAX_SIDE <= 0:
+        return image_bytes, mime
+    scale = f"scale=w='min(iw,{MAX_SIDE})':h='min(ih,{MAX_SIDE})':force_original_aspect_ratio=decrease"
+    try:
+        r = subprocess.run([ffmpeg, "-v", "error", "-i", "pipe:0", "-vf", scale, "-frames:v", "1",
+                            "-f", "image2", "-c:v", "mjpeg", "-q:v", "3", "pipe:1"],
+                           input=image_bytes, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        toollog.log_detail("vision", f"resize failed: {e}")
+        return image_bytes, mime
+    if r.returncode != 0 or not r.stdout:
+        toollog.log_detail("vision", f"resize failed: {r.stderr.decode('utf-8', 'replace')[:200]}")
+        return image_bytes, mime
+    return r.stdout, "image/jpeg"
+
 def describe_image_bytes(image_bytes: bytes, mime: str, question: str) -> str:
     """Ask the vision model about in-memory image bytes. Never raises -
     returns an "Error: ..." string on failure, so callers can relay the
     result as-is."""
     if not image_bytes:
         return "Error: image was empty"
+    image_bytes, mime = fit_for_model(image_bytes, mime)
     data_url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
     messages = [{"role": "user", "content": [
         {"type": "text", "text": question},
@@ -56,6 +81,10 @@ def describe_image_bytes(image_bytes: bytes, mime: str, question: str) -> str:
         toollog.log_detail("vision", f"vision api failed: {e}")
         if "no choices" in str(e):
             return "Error: vision API returned no choices (is a vision-capable model loaded?)"
+        if " returned 413" in str(e) or "exceed" in str(e):
+            return "Error: that image is too large for the vision model"
+        if " returned " in str(e):
+            return "Error: the vision model could not process that image"
         return "Error: vision backend is unavailable right now"
     content = content.strip()
     if not content:

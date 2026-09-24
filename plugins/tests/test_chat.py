@@ -5,6 +5,8 @@
 import os
 import sys
 import json
+import shutil
+import subprocess
 import unittest
 
 os.environ.setdefault("METALD_TOOL_LOG", os.devnull)
@@ -52,6 +54,24 @@ class ChatTest(unittest.TestCase):
         self.assertTrue(msg[1]["image_url"]["url"].startswith("data:image/png;base64,"))
         self.reply = (500, b"boom")
         self.assertTrue(vision.describe_image_bytes(b"img", "image/png", "what").startswith("Error:"))
+
+    def test_too_large_is_reported_as_too_large(self):
+        vision.DEFAULT_API_URL = self.url
+        self.reply = (413, b'{"error":{"message":"vision tokens exceed processor budget"}}')
+        self.assertEqual(vision.describe_image_bytes(b"img", "image/png", "what"),
+                         "Error: that image is too large for the vision model")
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_large_image_is_shrunk_to_max_side(self):
+        big = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=3000x4000", "-frames:v", "1",
+                              "-f", "image2", "-c:v", "png", "pipe:1"], capture_output=True).stdout
+        out, mime = vision.fit_for_model(big, "image/png")
+        dims = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", "-"],
+                              input=out, capture_output=True).stdout.decode().strip()
+        self.assertEqual((mime, dims), ("image/jpeg", "1152,1536"))
+
+    def test_unreadable_image_is_sent_unchanged(self):
+        self.assertEqual(vision.fit_for_model(b"not an image", "image/png"), (b"not an image", "image/png"))
 
     def test_image_safety_check_refuses_without_a_prompt(self):
         old = vision.SAFETY_PROMPT

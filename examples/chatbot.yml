@@ -354,6 +354,7 @@ env:
   # looking at images (vision, cat_pic)
   # VISION_API_URL: http://127.0.0.1:8080/v1
   # VISION_API_KEY: ""
+  # VISION_MAX_SIDE: 1536   # larger images are shrunk to fit the model's vision budget
 
   # pastes (paste)
   # GIST_URL: https://gist.example.com

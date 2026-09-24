@@ -1,17 +1,19 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package behaviors
 
 import (
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/core"
-	"pkdindustries/soulshack/internal/irc"
-	"pkdindustries/soulshack/internal/llm"
+	"B4reMetal/metald/internal/core"
+	"B4reMetal/metald/internal/irc"
+	"B4reMetal/metald/internal/llm"
 )
 
-// JoinBehavior sends a greeting when the bot joins a channel
-type JoinBehavior struct {
-	BotNick string
-}
+// JoinBehavior sends a greeting when the bot joins a channel.
+type JoinBehavior struct{}
 
 func (b *JoinBehavior) Name() string {
 	return "join"
@@ -23,7 +25,7 @@ func (b *JoinBehavior) Events() []string {
 
 func (b *JoinBehavior) Check(ctx irc.ChatContextInterface, event *girc.Event) bool {
 	cfg := ctx.GetConfig()
-	return event.Source.Name == b.BotNick && cfg.Bot.Greeting != ""
+	return event.Source.Name == ctx.GetBotNick() && cfg.Bot.Greeting != ""
 }
 
 func (b *JoinBehavior) Execute(ctx irc.ChatContextInterface, event *girc.Event) {

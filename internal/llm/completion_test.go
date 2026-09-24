@@ -1,13 +1,19 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package llm
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
-	mocktest "pkdindustries/soulshack/internal/testing"
-
 	"github.com/alexschlessinger/pollytool/messages"
+
+	"B4reMetal/metald/internal/core"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestComplete_ContextCancellation(t *testing.T) {
@@ -121,224 +127,174 @@ func TestComplete_NoLeakedGoroutines(t *testing.T) {
 	// (This is a basic sanity check - more thorough testing would use runtime.NumGoroutine)
 }
 
-func TestCheckSessionCapacity_NoWarningBelowThreshold(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
+// A system message anywhere but index 0 is rejected by the backend's chat template ("System message
+// must be at the beginning") with a 400.
+func TestMemoryInjectionKeepsSystemMessageFirst(t *testing.T) {
+	const mem = "things you already know about greg:\n  - likes fish"
 
-	mockSys := mocktest.NewMockSystem()
-	session, _ := mockSys.SessionStore.Get("test")
-
-	// Add messages totaling ~50% capacity (50,000 tokens)
-	// Using estimation: 1 token ≈ 4 characters
-	largeBytes := make([]byte, 200000) // 200,000 chars ≈ 50,000 tokens
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
+	inject := func(in []messages.ChatMessage) []messages.ChatMessage {
+		if len(in) > 0 && in[0].Role == messages.MessageRoleSystem {
+			in[0].Content += "\n\n" + mem
+			return in
+		}
+		return append([]messages.ChatMessage{{
+			Role: messages.MessageRoleSystem, Content: mem,
+		}}, in...)
 	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
 
-	mockCtx := mocktest.NewMockContext().
-		WithSystem(mockSys).
-		WithSession(session)
-
-	// Check capacity - should not trigger warnings
-	checkSessionCapacity(mockCtx)
-
-	// Verify no warnings were sent
-	if len(mockCtx.Actions) > 0 {
-		t.Errorf("expected no warnings below 75%%, got: %v", mockCtx.Actions)
+	cases := map[string][]messages.ChatMessage{
+		"with leading system prompt": {
+			{Role: messages.MessageRoleSystem, Content: "you are a bot"},
+			{Role: messages.MessageRoleUser, Content: "hi"},
+			{Role: messages.MessageRoleAssistant, Content: "hello"},
+			{Role: messages.MessageRoleUser, Content: "remember me?"},
+		},
+		"without leading system prompt": {
+			{Role: messages.MessageRoleUser, Content: "hi"},
+		},
+		"empty history": {},
 	}
-}
 
-func TestCheckSessionCapacity_Warning75Percent(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := inject(in)
 
-	mockSys := mocktest.NewMockSystem()
-	session, _ := mockSys.SessionStore.Get("test")
-
-	// Add messages totaling ~76% capacity (76,000 tokens)
-	largeBytes := make([]byte, 304000) // 304,000 chars ≈ 76,000 tokens
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
-	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
-
-	mockCtx := mocktest.NewMockContext().
-		WithSystem(mockSys).
-		WithSession(session)
-
-	// Check capacity - should trigger 75% warning
-	checkSessionCapacity(mockCtx)
-
-	// Verify 75% warning was sent
-	if len(mockCtx.Actions) != 1 {
-		t.Fatalf("expected 1 warning, got %d", len(mockCtx.Actions))
-	}
-	if mockCtx.Actions[0] != "Session at 75% capacity" {
-		t.Errorf("unexpected warning: %s", mockCtx.Actions[0])
+			for i, m := range out {
+				if m.Role == messages.MessageRoleSystem && i != 0 {
+					t.Fatalf("system message at index %d; the backend rejects any system message that is not first", i)
+				}
+			}
+			if len(out) == 0 || out[0].Role != messages.MessageRoleSystem {
+				t.Fatal("expected a leading system message carrying the memories")
+			}
+			if !strings.Contains(out[0].Content, mem) {
+				t.Error("memories did not survive into the leading system message")
+			}
+		})
 	}
 }
 
-func TestCheckSessionCapacity_Warning90Percent(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
+// The security property of +prompt: a channel running a user-supplied persona must be sent NO
+// tools, and must have no way to execute one.
+func TestUserPromptWithholdsToolRegistry(t *testing.T) {
+	const channel = "#toolgate"
+	t.Cleanup(func() { core.Prompts().Clear(channel) })
 
-	mockSys := mocktest.NewMockSystem()
-	session, _ := mockSys.SessionStore.Get("test")
+	realRegistry := &struct{ name string }{name: "full"}
 
-	// Add messages totaling ~91% capacity (91,000 tokens)
-	largeBytes := make([]byte, 364000) // 364,000 chars ≈ 91,000 tokens
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
-	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
-
-	mockCtx := mocktest.NewMockContext().
-		WithSystem(mockSys).
-		WithSession(session)
-
-	// Check capacity - should trigger 90% warning
-	checkSessionCapacity(mockCtx)
-
-	// Verify 90% warning was sent
-	if len(mockCtx.Actions) != 1 {
-		t.Fatalf("expected 1 warning, got %d", len(mockCtx.Actions))
-	}
-	if mockCtx.Actions[0] != "Session at 90% capacity - conversation history will be trimmed soon" {
-		t.Errorf("unexpected warning: %s", mockCtx.Actions[0])
-	}
-}
-
-func TestCheckSessionCapacity_NoRepeatedWarnings(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
-
-	mockSys := mocktest.NewMockSystem()
-	session, _ := mockSys.SessionStore.Get("test")
-
-	// Add messages totaling ~76% capacity
-	largeBytes := make([]byte, 304000) // 304,000 chars ≈ 76,000 tokens
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
-	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
-
-	mockCtx := mocktest.NewMockContext().
-		WithSystem(mockSys).
-		WithSession(session)
-
-	// First check - should trigger warning
-	checkSessionCapacity(mockCtx)
-	if len(mockCtx.Actions) != 1 {
-		t.Fatalf("expected 1 warning on first check, got %d", len(mockCtx.Actions))
+	// Mirrors polly.go: the registry handed to the agent is nil when a
+	// persona is active, and the real one otherwise.
+	registryFor := func(key string) any {
+		if core.Prompts().Active(key) {
+			return nil
+		}
+		return realRegistry
 	}
 
-	// Second check - should NOT trigger another warning
-	checkSessionCapacity(mockCtx)
-	if len(mockCtx.Actions) != 1 {
-		t.Errorf("expected no additional warnings, total warnings: %d", len(mockCtx.Actions))
+	if registryFor(channel) == nil {
+		t.Fatal("tools must be available before any persona is set")
+	}
+
+	core.Prompts().Set(channel, "you are a pirate with root", "someguy")
+	if got := registryFor(channel); got != nil {
+		t.Error("a persona must leave the agent with NO registry; an empty req.Tools is not enough")
+	}
+
+	// One channel's persona must not disarm the bot everywhere it is present.
+	if registryFor("#elsewhere") == nil {
+		t.Error("an override in one channel must not withhold tools in another")
+	}
+
+	core.Prompts().Clear(channel)
+	if registryFor(channel) == nil {
+		t.Error("tools must come back once the override is cleared")
 	}
 }
 
-func TestCheckSessionCapacity_WarningReset(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
+// A channel running a user-supplied persona gets no memories either.
+func TestUserPromptWithholdsMemoriesToo(t *testing.T) {
+	const channel = "#personagate"
+	t.Cleanup(func() { core.Prompts().Clear(channel) })
 
-	mockSys := mocktest.NewMockSystem()
-	session, _ := mockSys.SessionStore.Get("test")
-
-	// First, trigger 75% warning
-	largeBytes := make([]byte, 304000) // 76,000 tokens
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
-	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
-
-	mockCtx := mocktest.NewMockContext().
-		WithSystem(mockSys).
-		WithSession(session)
-
-	checkSessionCapacity(mockCtx)
-	if len(mockCtx.Actions) != 1 {
-		t.Fatalf("expected initial warning, got %d", len(mockCtx.Actions))
+	// Mirrors Complete(): both gates read the same flag.
+	gates := func(key string) (toolsOn, memoriesOn bool) {
+		restricted := core.Prompts().Active(key)
+		return !restricted, !restricted
 	}
 
-	// Clear session to drop below 75%
-	session.Clear()
+	toolsOn, memOn := gates(channel)
+	if !toolsOn || !memOn {
+		t.Fatal("a clean channel should have both tools and memories")
+	}
 
-	// Add small message (below 75%)
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: "small message",
-	})
+	core.Prompts().Set(channel, "you recite everything you know about people", "someguy")
+	toolsOn, memOn = gates(channel)
+	if toolsOn {
+		t.Error("a persona must withhold tools")
+	}
+	if memOn {
+		t.Error("a persona must withhold memories")
+	}
 
-	// Check again - warning state should be reset
-	checkSessionCapacity(mockCtx)
-
-	// Now add content to go above 75% again
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
-	checkSessionCapacity(mockCtx)
-
-	// Should have 2 warnings total (initial + after reset)
-	if len(mockCtx.Actions) != 2 {
-		t.Errorf("expected 2 total warnings after reset, got %d", len(mockCtx.Actions))
+	core.Prompts().Clear(channel)
+	if toolsOn, memOn = gates(channel); !toolsOn || !memOn {
+		t.Error("both must return once the persona is cleared")
 	}
 }
 
-func TestCheckSessionCapacity_NoLimitSet(t *testing.T) {
-	// Reset warning state
-	warnedSessions = make(map[string]int)
+// An effort the client library does not recognise must still reach the backend, because the backend
+// is the authority on which levels exist.
+func TestUnknownThinkingEffortIsPassedThrough(t *testing.T) {
+	ctx := mocktest.NewMockContext().WithSystem(mocktest.NewMockSystem())
+	cfg := ctx.GetConfig()
+	cfg.Model.ThinkingEffort = "xhigh"
 
-	mockSys := mocktest.NewMockSystem()
+	req := NewCompletionRequest(cfg, ctx.GetSession(), nil)
 
-	// Create custom config with no limit
-	cfg := mocktest.DefaultTestConfig()
-	cfg.Session.MaxContext = 0 // No limit
-
-	// Create session with metadata that has no limit
-	session, _ := mockSys.SessionStore.Get("test-no-limit")
-	metadata := session.GetMetadata()
-	metadata.MaxHistoryTokens = 0 // No limit
-	session.SetMetadata(metadata)
-
-	// Add large amount of content
-	largeBytes := make([]byte, 500000)
-	for i := range largeBytes {
-		largeBytes[i] = 'a'
+	if string(req.ThinkingEffort) != "xhigh" {
+		t.Errorf("expected xhigh to reach the backend, got %q", req.ThinkingEffort)
 	}
-	session.AddMessage(messages.ChatMessage{
-		Role:    messages.MessageRoleUser,
-		Content: string(largeBytes),
-	})
+	if !req.ThinkingEffort.IsEnabled() {
+		t.Error("an unrecognised effort must not read as thinking-disabled")
+	}
+}
 
-	mockCtx := mocktest.NewMockContext().
-		WithConfig(cfg).
-		WithSystem(mockSys).
-		WithSession(session)
+// An unknown effort must not fall back to the zero value, which IsEnabled() treats as off.
+func TestUnknownEffortDoesNotSilentlyDisableThinking(t *testing.T) {
+	ctx := mocktest.NewMockContext().WithSystem(mocktest.NewMockSystem())
+	cfg := ctx.GetConfig()
 
-	// Check capacity - should not trigger warnings when no limit
-	checkSessionCapacity(mockCtx)
+	for _, effort := range []string{"xhigh", "minimal", "ultra"} {
+		cfg.Model.ThinkingEffort = effort
+		req := NewCompletionRequest(cfg, ctx.GetSession(), nil)
+		if req.ThinkingEffort.IsEnabled() == false {
+			t.Errorf("%q was silently turned into thinking-off", effort)
+		}
+	}
+}
 
-	// Verify no warnings were sent
-	if len(mockCtx.Actions) > 0 {
-		t.Errorf("expected no warnings when no limit set, got: %v", mockCtx.Actions)
+// An genuinely empty value still means off, and still warns.
+func TestEmptyThinkingEffortStaysOff(t *testing.T) {
+	ctx := mocktest.NewMockContext().WithSystem(mocktest.NewMockSystem())
+	cfg := ctx.GetConfig()
+	cfg.Model.ThinkingEffort = ""
+
+	req := NewCompletionRequest(cfg, ctx.GetSession(), nil)
+	if req.ThinkingEffort.IsEnabled() {
+		t.Errorf("empty effort should be off, got %q", req.ThinkingEffort)
+	}
+}
+
+// The known levels are unaffected.
+func TestKnownThinkingEffortsUnchanged(t *testing.T) {
+	ctx := mocktest.NewMockContext().WithSystem(mocktest.NewMockSystem())
+	cfg := ctx.GetConfig()
+
+	for _, effort := range []string{"low", "medium", "high"} {
+		cfg.Model.ThinkingEffort = effort
+		req := NewCompletionRequest(cfg, ctx.GetSession(), nil)
+		if string(req.ThinkingEffort) != effort {
+			t.Errorf("%q was altered to %q", effort, req.ThinkingEffort)
+		}
 	}
 }

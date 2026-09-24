@@ -1,0 +1,16 @@
+.git
+.env*
+config.yml*
+config-overrides.json
+*.db
+*.db-shm
+*.db-wal
+*.bak*
+reminders.json
+ignores.json
+testbed/
+metald
+soulshack
+__pycache__/
+*.pyc
+docs/images/

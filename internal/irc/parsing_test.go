@@ -1,6 +1,13 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package irc
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCheckAddressed(t *testing.T) {
 	tests := []struct {
@@ -12,13 +19,19 @@ func TestCheckAddressed(t *testing.T) {
 		{"exact with colon", "bot: hello", "bot", true},
 		{"exact with space", "bot hello", "bot", true},
 		{"exact with comma", "bot, hello", "bot", true},
-		{"nick prefix matches longer word", "botter hello", "bot", false},
-		{"nick in middle", "hello bot", "bot", false},
-		{"nick at end", "hello bot", "bot", false},
+		{"embedded in longer word, prefix position", "botter hello", "bot", false},
+		{"embedded in longer word, mid message", "hey heybot there", "bot", false},
+		{"anywhere in middle, standalone word", "hello bot there", "bot", true},
+		{"anywhere at end, standalone word", "hello there bot", "bot", true},
+		{"anywhere with punctuation before", "hey, bot!", "bot", true},
 		{"empty message", "", "bot", false},
-		{"empty nick", "bot: hello", "", true}, // HasPrefix with empty prefix is always true
-		{"case sensitive", "Bot: hello", "bot", false},
+		{"empty nick", "bot: hello", "", true}, // empty trigger matches everything
+		{"case insensitive - capitalized message", "Bot: hello", "bot", true},
+		{"case insensitive - capitalized trigger config", "bot: hello", "Bot", true},
+		{"case insensitive - all caps still respects word boundary", "ROBOTS hello", "bot", false},
 		{"just nick", "bot", "bot", true},
+		{"multi-word trigger anywhere", "yo hey bot wake up", "hey bot", true},
+		{"multi-word trigger embedded in larger words", "xhey botx wake up", "hey bot", false},
 	}
 
 	for _, tt := range tests {
@@ -31,12 +44,44 @@ func TestCheckAddressed(t *testing.T) {
 	}
 }
 
+func TestStripLeadingTrigger(t *testing.T) {
+	tests := []struct {
+		name        string
+		message     string
+		trigger     string
+		wantRemain  []string
+		wantMatched bool
+	}{
+		{"leading single-word trigger with colon", "bot: /help", "bot", []string{"/help"}, true},
+		{"leading single-word trigger with space", "bot hello there", "bot", []string{"hello", "there"}, true},
+		{"leading single-word trigger with comma", "bot, hello", "bot", []string{"hello"}, true},
+		{"leading multi-word trigger", "hey bot set model gpt-5", "hey bot", []string{"set", "model", "gpt-5"}, true},
+		{"case insensitive, preserves remainder casing", "MetalAI /Help Me", "metalai", []string{"/Help", "Me"}, true},
+		{"trigger not leading - matched mid-message by CheckAddressed", "hey bot /help", "bot", nil, false},
+		{"trigger is the whole message", "bot", "bot", []string{}, true},
+		{"embedded prefix doesn't count", "botter hello", "bot", nil, false},
+		{"empty trigger", "bot: hello", "", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRemain, gotMatched := StripLeadingTrigger(tt.message, tt.trigger)
+			if gotMatched != tt.wantMatched || strings.Join(gotRemain, "|") != strings.Join(tt.wantRemain, "|") {
+				t.Errorf("StripLeadingTrigger(%q, %q) = (%v, %v), want (%v, %v)",
+					tt.message, tt.trigger, gotRemain, gotMatched, tt.wantRemain, tt.wantMatched)
+			}
+		})
+	}
+}
+
 func TestCheckAdmin_EmptyList(t *testing.T) {
-	// WARNING: Empty admin list means everyone is admin!
-	// This test documents this security-relevant behavior.
+	// An empty admin list means nobody is admin; a missing config line must not grant access.
 	got := CheckAdmin("anyone!user@host.com", []string{})
-	if !got {
-		t.Error("CheckAdmin with empty list should return true (everyone is admin)")
+	if got {
+		t.Error("CheckAdmin with empty list must return false (nobody is admin)")
+	}
+	if CheckAdmin("anyone!user@host.com", nil) {
+		t.Error("CheckAdmin with nil list must return false (nobody is admin)")
 	}
 }
 

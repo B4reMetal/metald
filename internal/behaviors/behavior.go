@@ -1,9 +1,13 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package behaviors
 
 import (
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/irc"
+	"B4reMetal/metald/internal/irc"
 )
 
 // Behavior defines the interface for event-based behaviors

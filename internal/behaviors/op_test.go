@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package behaviors
 
 import (
@@ -5,11 +9,11 @@ import (
 
 	"github.com/lrstanley/girc"
 
-	mocktest "pkdindustries/soulshack/internal/testing"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestOpBehaviorCheck(t *testing.T) {
-	behavior := &OpBehavior{BotNick: "soulshack"}
+	behavior := &OpBehavior{}
 
 	tests := []struct {
 		name   string
@@ -18,17 +22,17 @@ func TestOpBehaviorCheck(t *testing.T) {
 	}{
 		{
 			name:   "matches +o for bot",
-			params: []string{"#test", "+o", "soulshack"},
+			params: []string{"#test", "+o", "metald"},
 			want:   true,
 		},
 		{
 			name:   "matches -o for bot",
-			params: []string{"#test", "-o", "soulshack"},
+			params: []string{"#test", "-o", "metald"},
 			want:   true,
 		},
 		{
 			name:   "ignores voice change for bot",
-			params: []string{"#test", "+v", "soulshack"},
+			params: []string{"#test", "+v", "metald"},
 			want:   false,
 		},
 		{
@@ -38,7 +42,7 @@ func TestOpBehaviorCheck(t *testing.T) {
 		},
 		{
 			name:   "handles mixed prefix modes before bot op",
-			params: []string{"#test", "+qo", "chanowner", "soulshack"},
+			params: []string{"#test", "+qo", "chanowner", "metald"},
 			want:   true,
 		},
 	}
@@ -69,25 +73,25 @@ func TestOpActionForNick(t *testing.T) {
 	}{
 		{
 			name:       "returns opped action",
-			params:     []string{"#test", "+o", "soulshack"},
+			params:     []string{"#test", "+o", "metald"},
 			wantAction: "opped",
 			wantOK:     true,
 		},
 		{
 			name:       "returns deopped action",
-			params:     []string{"#test", "-o", "soulshack"},
+			params:     []string{"#test", "-o", "metald"},
 			wantAction: "deopped",
 			wantOK:     true,
 		},
 		{
 			name:       "ignores unrelated target mode",
-			params:     []string{"#test", "+v", "soulshack"},
+			params:     []string{"#test", "+v", "metald"},
 			wantAction: "",
 			wantOK:     false,
 		},
 		{
 			name:       "keeps arguments aligned across mixed modes",
-			params:     []string{"#test", "+ov", "soulshack", "otheruser"},
+			params:     []string{"#test", "+ov", "metald", "otheruser"},
 			wantAction: "opped",
 			wantOK:     true,
 		},
@@ -100,10 +104,39 @@ func TestOpActionForNick(t *testing.T) {
 				Params:  tt.params,
 			}
 
-			gotAction, gotOK := opActionForNick(event, "soulshack")
+			gotAction, gotOK := opActionForNick(event, "metald")
 			if gotAction != tt.wantAction || gotOK != tt.wantOK {
 				t.Fatalf("opActionForNick(%v) = (%q, %v), want (%q, %v)", tt.params, gotAction, gotOK, tt.wantAction, tt.wantOK)
 			}
 		})
+	}
+}
+
+// The nick must come from the connection, not from a value captured when the behavior was
+// registered.
+func TestOpBehaviorUsesConnectionNick(t *testing.T) {
+	behavior := &OpBehavior{}
+
+	ctx := mocktest.NewMockContext()
+	ctx.BotNick = "metalai" // this network's nick, not the first network's
+	ctx.GetConfig().Bot.OpWatcher = true
+
+	event := &girc.Event{
+		Command: girc.MODE,
+		Params:  []string{"#test", "+o", "metalai"},
+		Source:  &girc.Source{Name: "someop"},
+	}
+	if !behavior.Check(ctx, event) {
+		t.Error("should react to an op change on this connection's nick")
+	}
+
+	// And must NOT react to a different nick, even one another network uses.
+	other := &girc.Event{
+		Command: girc.MODE,
+		Params:  []string{"#test", "+o", "BareMetal"},
+		Source:  &girc.Source{Name: "someop"},
+	}
+	if behavior.Check(ctx, other) {
+		t.Error("reacted to an op change on another network's nick")
 	}
 }

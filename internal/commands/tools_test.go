@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
@@ -8,7 +12,7 @@ import (
 	"github.com/alexschlessinger/pollytool/schema"
 	"github.com/alexschlessinger/pollytool/tools"
 
-	mocktest "pkdindustries/soulshack/internal/testing"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestToolsCommand_ListEmpty(t *testing.T) {
@@ -17,7 +21,7 @@ func TestToolsCommand_ListEmpty(t *testing.T) {
 
 	ctx := mocktest.NewMockContext().
 		WithSystem(mockSys).
-		WithArgs("/tools", "list")
+		WithArgs("+tools", "list")
 
 	cmd := &ToolsCommand{}
 	cmd.Execute(ctx)
@@ -42,7 +46,7 @@ func TestToolsCommand_ListTools(t *testing.T) {
 
 	ctx := mocktest.NewMockContext().
 		WithSystem(mockSys).
-		WithArgs("/tools", "list")
+		WithArgs("+tools", "list")
 
 	cmd := &ToolsCommand{}
 	cmd.Execute(ctx)
@@ -62,7 +66,7 @@ func TestToolsCommand_AddRequiresAdmin(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(false).
 		WithSystem(mockSys).
-		WithArgs("/tools", "add", "/some/path")
+		WithArgs("+tools", "add", "/some/path")
 
 	cmd := &ToolsCommand{}
 	cmd.Execute(ctx)
@@ -81,7 +85,7 @@ func TestToolsCommand_RemoveRequiresAdmin(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(false).
 		WithSystem(mockSys).
-		WithArgs("/tools", "remove", "some_tool")
+		WithArgs("+tools", "remove", "some_tool")
 
 	cmd := &ToolsCommand{}
 	cmd.Execute(ctx)

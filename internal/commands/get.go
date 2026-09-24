@@ -1,22 +1,26 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
 	"fmt"
 	"strings"
 
-	"pkdindustries/soulshack/internal/irc"
+	"B4reMetal/metald/internal/irc"
 )
 
-// GetCommand handles the /get command for reading configuration
+// GetCommand handles the +get command for reading configuration
 type GetCommand struct{}
 
-func (c *GetCommand) Name() string    { return "/get" }
-func (c *GetCommand) AdminOnly() bool { return false }
+func (c *GetCommand) Name() string    { return "+get" }
+func (c *GetCommand) AdminOnly() bool { return true }
 
 func (c *GetCommand) Execute(ctx irc.ChatContextInterface) {
 	keys := getConfigKeys()
 	if len(ctx.GetArgs()) < 2 {
-		ctx.Reply(fmt.Sprintf("Usage: /get <key>. Available keys: %s", strings.Join(keys, ", ")))
+		ctx.Reply(fmt.Sprintf("Usage: +get <key>. Available keys: %s", strings.Join(keys, ", ")))
 		return
 	}
 

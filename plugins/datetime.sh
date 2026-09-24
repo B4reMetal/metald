@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+# Modified 2026 by BareMetal
+# SPDX-License-Identifier: GPL-3.0-only
 
 set -e
 
@@ -9,7 +12,7 @@ if [[ "$1" == "--schema" ]]; then
   cat <<EOF
 {
   "title": "get_current_date_with_format",
-  "description": "provides the current time and date in the specified unix date command format",
+  "description": "provides the current time and date in UTC, in the specified unix date command format",
   "type": "object",
   "properties": {
     "format": {
@@ -40,8 +43,8 @@ if [[ "$1" == "--execute" ]]; then
     exit 1
   fi
 
-  # Use -- to prevent option parsing
-  date_output=$(date -- "$format")
+  # -u for UTC; -- to prevent option parsing
+  date_output=$(date -u -- "$format")
   echo "$date_output"
   exit 0
 fi

@@ -1,10 +1,10 @@
-# Modifying Soulshack Code
+# Modifying Metald Code
 
 This guide provides an overview of the codebase and instructions for common modification tasks.
 
 ## Project Structure
 
--   **`cmd/soulshack/`**: Application entry point (`main.go`).
+-   **`cmd/metald/`**: Application entry point (`main.go`).
 -   **`internal/behaviors/`**: Event-driven behaviors (URL watcher, op watcher, addressed/non-addressed chat).
 -   **`internal/bot/`**: Core bot runtime, system initialization, and behavior registration.
 -   **`internal/commands/`**: Implementation of IRC commands (e.g., `/help`, `/tools`).
@@ -35,7 +35,7 @@ This guide provides an overview of the codebase and instructions for common modi
 
 ### Adding a Tool
 
-Soulshack supports a unified tool system that includes native Go tools, Shell scripts, and MCP servers.
+Metald supports a unified tool system that includes native Go tools, Shell scripts, and MCP servers.
 
 #### 1. Shell Tools
 Shell tools are executable scripts that implement a simple protocol:
@@ -68,8 +68,10 @@ fi
 
 To use: Add the script path to your config or use `/tools add ./get_date.sh`.
 
+Add a `"requires": ["SOME_API_KEY"]` list to the schema for any environment variable the tool cannot work without; the bot checks them at startup and refuses to run with the tool enabled but unconfigured.
+
 #### 2. MCP Servers
-Soulshack supports the [Model Context Protocol](https://modelcontextprotocol.io). You can load MCP servers by providing a JSON configuration file using the Claude Desktop format.
+Metald supports the [Model Context Protocol](https://modelcontextprotocol.io). You can load MCP servers by providing a JSON configuration file using the Claude Desktop format.
 
 **Local Server Example (`filesystem.json`):**
 ```json

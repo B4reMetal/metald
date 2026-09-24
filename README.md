@@ -1,8 +1,6 @@
-# Soulshack User Guide
+# Metald User Guide
 
-![soulshack](docs/images/logo.png)
-
-**Soulshack** is an advanced IRC chatbot powered by LLMs, designed to bridge traditional chat with modern AI capabilities.
+**Metald** is an advanced IRC chatbot powered by LLMs, designed to bridge traditional chat with modern AI capabilities.
 
 ## Features
 
@@ -14,13 +12,75 @@
 -   **Passive Mode**: Optional URL watching and analysis.
 -   **Runtime Configuration**: Manage settings via IRC commands.
 
+## About this fork
+
+This is a fork of [pkdindustries/soulshack](https://github.com/pkdindustries/soulshack), licensed under GPL-3 like the original. It adds:
+
+-   **Multiple IRC networks** from one process, each with its own nick, channel and conversation context. Requests are serialized across all networks so a single model backend is never asked to do two things at once.
+-   **Per-network data isolation**: memories, ignores, flood counters, reminders and suspicion scores never cross between networks.
+-   **Inbound screening** (`screennicks`): a classifier gate in front of the model for named nicks. A refused message never enters history.
+-   **Outbound screening** (`filternicks`): the finished reply is checked before posting, with a deterministic block on any reply that reproduces the system prompt.
+-   **Injection resistance**: stripping of fake `<think>`/tool tags from input, a filter for reasoning the model writes into its reply, a per-turn output budget, refused tool arguments redacted from history, and a decaying per-speaker suspicion score that quarantines only that speaker's own turns.
+-   **Persistent memory** (SQLite) with a classifier on every write, so a user cannot store an instruction disguised as a fact.
+-   **Tools**: web search and page fetch (Exa), code execution in a throwaway Firecracker microVM (Fly.io), image generation, music generation, video with sound (LTX-2.5), text-to-speech, speech-to-text, Wikipedia, MusicBrainz, YouTube transcripts, and Context7 library docs over MCP.
+
+### Plugins
+
+- **`plugins/`** ships with the code: the generic tools listed below, and `plugins/lib/metald_tools`, a small shared library (logging, safety review, URL guard, lyricist, image prompt refiner, hosting uploads, media metadata stripping). None of the tools are tied to one person's setup; everything site-specific is an environment variable.
+- **`custom-plugins/`** is for your own tools. It is git-ignored apart from its README, so site-specific tools stay out of the repo. In Docker, mount them at `/plugins`. The shared library is on `PYTHONPATH` for every tool, so custom plugins can use it too. See `custom-plugins/README.md`.
+
+### Tool credentials
+
+Tools are optional; the bot starts with none. Every tool reads its settings from environment variables. Copy `examples/env.example` to `.env` at the repo root (gitignored) and fill in what you use. An enabled tool must have everything it declares in the `requires` list of its `--schema` output, or the bot refuses to start and names the tool and the missing variables. Tools with no entry here need no credential. The bot's own prompts live in `config.yml`; `examples/chatbot.yml` carries the full default text, and the bot refuses to start if any of the six prompt keys is missing.
+
+| tool | needs |
+|---|---|
+| `websearch`, `webfetch` | `EXA_API_KEY` |
+| `sandbox` (run_code) | `FLY_API_TOKEN`, `FLY_SANDBOX_APP` |
+| `imagegen`, `musicgen`, `tts`, `videogen` | `COMFYUI_URL`, plus a file host: `ZIPLINE_URL`/`ZIPLINE_TOKEN` by default, or `UPLOAD_BACKEND=imgbb`/`http` (see *File hosting*) |
+| `musicgen` lyricist step | `LYRICIST_PROMPT` (generic text in `env.example`), optional `LYRICIST_URL`/`LYRICIST_MODEL` |
+| `videogen` | `COMFYUI_URL` with LTX-2.5 models, `ZIPLINE_URL`/`ZIPLINE_TOKEN`, `VIDEO_SAFETY_POLICY`, `ffmpeg` on PATH |
+| `stt` | `WHISPER_URL` |
+| `vision`, `cat_pic` | `VISION_API_URL`, `VISION_API_KEY` |
+| `paste` | `GIST_URL`, `GIST_TOKEN` |
+| `safetyreview` (used by several tools) | `SAFETY_REVIEW_URL`, `SAFETY_REVIEW_MODEL` |
+
+### File hosting
+
+Generated media goes through one uploader (`metald_tools/hosting.py`), picked with `UPLOAD_BACKEND`:
+
+- `zipline` (default): `ZIPLINE_URL`, `ZIPLINE_TOKEN`
+- `imgbb`: `IMGBB_API_KEY`, images only
+- `http`: any other host, configured from the environment: endpoint (`UPLOAD_URL`, may contain `{filename}`), method, multipart or raw body, extra form fields, where the URL is in the response (`UPLOAD_RESPONSE`, a JSON path or `text`), and how expiry is sent
+
+`UPLOAD_HEADERS` adds headers to every upload on every backend, e.g. `UPLOAD_HEADERS="Authorization: Bearer $FILES_TOKEN"`. For anything the `http` backend can't express, a custom plugin can call `hosting.register_backend()`. `examples/env.example` has the full list.
+
+`examples/chatbot.yml` documents the fork's configuration keys at the bottom.
+
 ## Quickstart
 
 ### Option 1: Docker
 
+The image bundles the binary, Python 3, curl, ffmpeg, yt-dlp and every shipped tool under `/app/plugins`, with the shared `metald_tools` library on `PYTHONPATH`. Three mount points:
+
+| path | what goes there |
+|---|---|
+| `/config` | `config.yml` (start from `examples/chatbot.yml`) and `.env` with credentials for the tools you enable |
+| `/plugins` | your own tools: any executable that answers `--schema` and `--execute`, listed in `config.yml` as `/plugins/<name>` |
+| `/data` | runtime state: `memories.db`, `reminders.json`, `ignores.json`, `config-overrides.json` |
+
 ```bash
-docker build . -t soulshack:dev
+docker build . -t metald:dev
+mkdir -p config plugins data
+docker run --rm --entrypoint cat metald:dev /app/examples/chatbot.yml > config/config.yml
+docker run --rm --entrypoint cat metald:dev /app/examples/env.example > config/.env
+# edit config/config.yml (server, channel, prompts, tool list) and config/.env
+docker run -d --name metald \
+  -v $(pwd)/config:/config -v $(pwd)/plugins:/plugins -v $(pwd)/data:/data \
+  metald:dev
 ```
+
+`examples/docker-compose.yml` does the same. Bundled tools are referenced as `plugins/<name>` in `config.yml` (the working directory is `/app`); the bot refuses to start if an enabled tool is missing a credential it declares, and the log names the tool and the variable.
 
 ### Option 2: Build from Source
 
@@ -28,9 +88,9 @@ docker build . -t soulshack:dev
 
 1.  **Clone and Build**:
     ```bash
-    git clone https://github.com/pkdindustries/soulshack.git
-    cd soulshack
-    go build -o soulshack cmd/soulshack/main.go
+    git clone https://github.com/B4reMetal/metald.git
+    cd metald
+    go build -o metald cmd/metald/main.go
     ```
 
 2.  **Run**:
@@ -39,13 +99,13 @@ docker build . -t soulshack:dev
     
     **Local Binary**:
     ```bash
-    ./soulshack --config examples/chatbot.yml
+    ./metald --config examples/chatbot.yml
     ```
 
     **Docker**:
     ```bash
     # Mount config file to container
-    docker run -v $(pwd)/examples/chatbot.yml:/config.yml soulshack:dev \
+    docker run -v $(pwd)/examples/chatbot.yml:/config.yml metald:dev \
       --config /config.yml
     ```
 
@@ -53,12 +113,12 @@ docker build . -t soulshack:dev
 
     **Local Binary**:
     ```bash
-    ./soulshack \
-      --nick soulshack \
+    ./metald \
+      --nick metald \
       --server irc.example.com \
       --port 6697 \
       --tls \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --saslnick mybot \
       --saslpass mypassword \
       --admins "admin!*@*" \
@@ -67,7 +127,7 @@ docker build . -t soulshack:dev
       --maxtokens 4096 \
       --temperature 1 \
       --apitimeout 5m \
-      --tool "examples/tools/datetime.sh" \
+      --tool "plugins/datetime.sh" \
       --tool "irc__op" \
       --thinkingeffort off \
       --urlwatcher \
@@ -76,12 +136,12 @@ docker build . -t soulshack:dev
 
     **Docker**:
     ```bash
-    docker run soulshack:dev \
-      --nick soulshack \
+    docker run metald:dev \
+      --nick metald \
       --server irc.example.com \
       --port 6697 \
       --tls \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --saslnick mybot \
       --saslpass mypassword \
       --admins "admin!*@*" \
@@ -100,9 +160,9 @@ docker build . -t soulshack:dev
 
     **Local Binary**:
     ```bash
-    ./soulshack \
+    ./metald \
       --server irc.example.com \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --model ollama/qwen3:30b \
       --ollamaurl "http://localhost:11434"
     ```
@@ -110,9 +170,9 @@ docker build . -t soulshack:dev
     **Docker**:
     ```bash
     # Use --network host to access Ollama on localhost
-    docker run --network host soulshack:dev \
+    docker run --network host metald:dev \
       --server irc.example.com \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --model ollama/qwen3:30b \
       --ollamaurl "http://localhost:11434"
     ```
@@ -121,18 +181,18 @@ docker build . -t soulshack:dev
 
     **Local Binary**:
     ```bash
-    ./soulshack \
+    ./metald \
       --server irc.example.com \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --model anthropic/claude-opus-4.5 \
       --anthropickey "sk-ant-..."
     ```
 
     **Docker**:
     ```bash
-    docker run soulshack:dev \
+    docker run metald:dev \
       --server irc.example.com \
-      --channel '#soulshack' \
+      --channel '#metald' \
       --model anthropic/claude-opus-4.5 \
       --anthropickey "sk-ant-..."
     ```
@@ -142,7 +202,7 @@ docker build . -t soulshack:dev
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-n, --nick` | soulshack | Bot nickname |
+| `-n, --nick` | metald | Bot nickname |
 | `-s, --server` | localhost | IRC server address |
 | `-p, --port` | 6667 | IRC server port |
 | `-c, --channel` | | Channel to join |
@@ -152,6 +212,9 @@ docker build . -t soulshack:dev
 | `--saslpass` | | SASL password |
 | `-b, --config` | | Path to YAML config file |
 | `-A, --admins` | | Comma-separated admin hostmasks |
+| `-a, --addressed` | true | Require the bot be addressed to respond |
+| `--trigger` | | Word/phrase that activates the bot instead of its nick (e.g. `hey bot`) |
+| `--responseprefix` | | Prefix prepended to every response line (e.g. `[metalai]`) |
 | `-V, --verbose` | false | Enable debug logging |
 | `--model` | ollama/llama3.2 | LLM model (`provider/name`) |
 | `--maxtokens` | 4096 | Max tokens per response |
@@ -172,38 +235,40 @@ Create a `config.yml` file:
 
 ```yaml
 server:
-  nick: "soulshack"
+  nick: "metald"
   server: "irc.example.com"
   port: 6697
-  channel: "#soulshack"
+  channel: "#metald"
   tls: true
 
 bot:
   admins: ["nick!user@host"]
   tools:
-    - "examples/tools/datetime.sh"
-    - "examples/mcp/filesystem.json"
+    - "plugins/datetime.sh"
+    - "plugins/mcp/filesystem.json"
 ```
 
-Run with: `./soulshack --config config.yml`
+Run with: `./metald --config config.yml`
 
 ## Commands
 
 | Command | Admin? | Description |
 |---------|--------|-------------|
-| `/help` | No | Show available commands |
-| `/version` | No | Show bot version |
-| `/tools` | No | List loaded tools |
-| `/tools add <spec>` | Yes | Add a tool at runtime |
-| `/tools remove <pattern>` | Yes | Remove a tool |
-| `/admins` | Yes | List admins |
-| `/admins add <hostmask>` | Yes | Add an admin |
-| `/set <key> <value>` | Yes | Set config parameter |
-| `/get <key>` | No | Get config parameter |
+| `+help` | No | Show available commands |
+| `+version` | No | Show bot version |
+| `+tools` | No | List loaded tools |
+| `+tools add <spec>` | Yes | Add a tool at runtime |
+| `+tools remove <pattern>` | Yes | Remove a tool |
+| `+admins` | Yes | List admins |
+| `+admins add <hostmask>` | Yes | Add an admin |
+| `+set <key> <value>` | Yes | Set config parameter |
+| `+screen <nick>` | Yes | Add the nick to `screennicks` and `filternicks` (gated in, checked out) and drop its earlier turns; persisted with the other runtime overrides |
+| `+screen list` / `+screen remove <nick>` / `+unscreen <nick>` | Yes | Show or edit the screening lists, including nicks that came from `config.yml` |
+| `+get <key>` | No | Get config parameter |
 
 ## Built-in Tools
 
-Soulshack comes with native IRC management tools (permissions apply):
+Metald comes with native IRC management tools (permissions apply):
 
 -   `irc_op`, `irc_deop`: Grant/revoke operator status.
 -   `irc_kick`, `irc_ban`, `irc_unban`: User management.
@@ -214,7 +279,7 @@ Soulshack comes with native IRC management tools (permissions apply):
 
 ## Sandboxing
 
-With `--sandbox` (or `sandbox: true` in YAML, env `SOULSHACK_SANDBOX`), all shell scripts, the built-in `bash` tool, and MCP servers launched via `--tool` run inside a platform sandbox. Disabled by default.
+With `--sandbox` (or `sandbox: true` in YAML, env `METALD_SANDBOX`), all shell scripts, the built-in `bash` tool, and MCP servers launched via `--tool` run inside a platform sandbox. Disabled by default.
 
 **Requirements**: `sandbox-exec` on macOS, `bwrap` (bubblewrap) on Linux. If the backend isn't available the flag is ignored with a `sandbox_unavailable` warning and tools run as before.
 
@@ -245,5 +310,9 @@ The sandbox itself lives in pollytool — for the full config schema, merge sema
 -   [Contributing](docs/contributing.md): Guide for adding commands and tools.
 -   [Architecture](docs/architecture.md): High-level system overview.
 
+## License
+
+GPL-3.0-only. Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors; Copyright (C) 2026 BareMetal for the metald changes. See `COPYRIGHT` and `license.md`.
+
 ---
-*Named as tribute to my old friend dayv, sp0t, who i think of often.*
+*From the original soulshack README: Named as tribute to my old friend dayv, sp0t, who i think of often.*

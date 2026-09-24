@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
@@ -5,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"pkdindustries/soulshack/internal/irc"
+	"B4reMetal/metald/internal/irc"
 
 	"github.com/alexschlessinger/pollytool/messages"
 	"github.com/alexschlessinger/pollytool/sessions"
 )
 
-// StatsCommand handles the /stats command for showing session statistics
+// StatsCommand handles the +stats command for showing session statistics
 type StatsCommand struct{}
 
-func (c *StatsCommand) Name() string    { return "/stats" }
+func (c *StatsCommand) Name() string    { return "+stats" }
 func (c *StatsCommand) AdminOnly() bool { return false }
 
 func (c *StatsCommand) Execute(ctx irc.ChatContextInterface) {

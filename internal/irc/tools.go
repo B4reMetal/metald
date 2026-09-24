@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package irc
 
 import (
@@ -75,19 +79,72 @@ func validateContext(ctx context.Context) (ChatContextInterface, error) {
 	return chatCtx, nil
 }
 
+// AdminOnlyTool wraps any tool (shell, native, or MCP) so it only executes
+// for admins. Non-admins get a clear denial message instead of it running.
+type AdminOnlyTool struct {
+	tools.Tool
+}
+
+// NewAdminOnlyTool wraps tool so only recognized admins can execute it.
+func NewAdminOnlyTool(tool tools.Tool) *AdminOnlyTool {
+	return &AdminOnlyTool{Tool: tool}
+}
+
+// IsAdminOnly reports whether tool is currently restricted to admins.
+func IsAdminOnly(tool tools.Tool) bool {
+	_, ok := tool.(*AdminOnlyTool)
+	return ok
+}
+
+// UnwrapAdminOnly returns the underlying unrestricted tool, or tool itself if it was never wrapped.
+func UnwrapAdminOnly(tool tools.Tool) tools.Tool {
+	if a, ok := tool.(*AdminOnlyTool); ok {
+		return a.Tool
+	}
+	return tool
+}
+
+// GetSchema annotates the description with an [admin only] suffix so the
+// model (and /tools listings) can see the restriction up front.
+func (a *AdminOnlyTool) GetSchema() *schema.ToolSchema {
+	c := a.Tool.GetSchema().Copy()
+	if c == nil {
+		return nil
+	}
+	c.Raw["description"] = c.Description() + " [admin only]"
+	return c
+}
+
+func (a *AdminOnlyTool) Execute(ctx context.Context, args map[string]any) (string, error) {
+	chatCtx, err := GetIRCContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !chatCtx.IsAdmin() {
+		return "You are not authorized to use this tool", nil
+	}
+	return a.Tool.Execute(ctx, args)
+}
+
 // RegisterIRCTools registers IRC tools as native tools with polly's registry
 func RegisterIRCTools(registry *tools.ToolRegistry) {
 	factories := map[string]func() tools.Tool{
-		"irc__op":         newIrcOpTool,
-		"irc__kick":       newIrcKickTool,
-		"irc__ban":        newIrcBanTool,
-		"irc__topic":      newIrcTopicTool,
-		"irc__action":     newIrcActionTool,
-		"irc__mode_set":   newIrcModeSetTool,
-		"irc__mode_query": newIrcModeQueryTool,
-		"irc__invite":     newIrcInviteTool,
-		"irc__names":      newIrcNamesTool,
-		"irc__whois":      newIrcWhoisTool,
+		"irc__op":          newIrcOpTool,
+		"irc__kick":        newIrcKickTool,
+		"irc__ban":         newIrcBanTool,
+		"irc__topic":       newIrcTopicTool,
+		"irc__action":      newIrcActionTool,
+		"irc__mode_set":    newIrcModeSetTool,
+		"irc__mode_query":  newIrcModeQueryTool,
+		"irc__invite":      newIrcInviteTool,
+		"irc__names":       newIrcNamesTool,
+		"irc__whois":       newIrcWhoisTool,
+		"irc__ignore":      newIrcIgnoreTool,
+		"memory__remember": newMemoryRememberTool,
+		"memory__recall":   newMemoryRecallTool,
+		"memory__forget":   newMemoryForgetTool,
+		"irc__remind":      newIrcRemindTool,
+		"irc__reminders":   newIrcRemindersTool,
 	}
 	for name, f := range factories {
 		registry.RegisterNative(name, f)

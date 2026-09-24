@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package testing
 
 import (
@@ -7,8 +11,8 @@ import (
 	"github.com/alexschlessinger/pollytool/sessions"
 	"github.com/alexschlessinger/pollytool/tools"
 
-	"pkdindustries/soulshack/internal/config"
-	"pkdindustries/soulshack/internal/core"
+	"B4reMetal/metald/internal/config"
+	"B4reMetal/metald/internal/core"
 )
 
 // MockLLM implements core.LLM for testing

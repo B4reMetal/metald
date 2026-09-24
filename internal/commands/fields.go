@@ -1,13 +1,18 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
+	"B4reMetal/metald/internal/core"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"B4reMetal/metald/internal/config"
 	"github.com/alexschlessinger/pollytool/llm"
-	"pkdindustries/soulshack/internal/config"
 )
 
 // configField defines how to get and set a configuration value
@@ -28,6 +33,35 @@ var configFields = map[string]configField{
 			return nil
 		},
 		getter: func(c *config.Configuration) string { return fmt.Sprintf("%t", c.Bot.Addressed) },
+	},
+	"trigger": {
+		setter: func(c *config.Configuration, v string) error { c.Bot.Trigger = v; return nil },
+		getter: func(c *config.Configuration) string {
+			if c.Bot.Trigger == "" {
+				return "(unset, using nick)"
+			}
+			return c.Bot.Trigger
+		},
+	},
+	"responseprefix": {
+		setter: func(c *config.Configuration, v string) error { c.Bot.ResponsePrefix = v; return nil },
+		getter: func(c *config.Configuration) string {
+			if c.Bot.ResponsePrefix == "" {
+				return "(unset)"
+			}
+			return c.Bot.ResponsePrefix
+		},
+	},
+	"ignoreprivate": {
+		setter: func(c *config.Configuration, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("invalid value for ignoreprivate. Please provide 'true' or 'false'")
+			}
+			c.Bot.IgnorePrivate = b
+			return nil
+		},
+		getter: func(c *config.Configuration) string { return fmt.Sprintf("%t", c.Bot.IgnorePrivate) },
 	},
 	"prompt": {
 		setter: func(c *config.Configuration, v string) error { c.Bot.Prompt = v; return nil },
@@ -110,8 +144,15 @@ var configFields = map[string]configField{
 	},
 	"thinkingeffort": {
 		setter: func(c *config.Configuration, v string) error {
-			if _, err := llm.ParseThinkingEffort(v); err != nil {
-				return err
+			_, parseErr := llm.ParseThinkingEffort(v)
+			reached, probeErr := probeThinkingEffort(c, v)
+			if probeErr != nil {
+				return probeErr
+			}
+			if !reached && parseErr != nil {
+				// Could not ask the backend, so fall back to the library's
+				// opinion rather than accepting something unverifiable.
+				return parseErr
 			}
 			c.Model.ThinkingEffort = v
 			return nil
@@ -139,6 +180,18 @@ var configFields = map[string]configField{
 			return nil
 		},
 		getter: func(c *config.Configuration) string { return fmt.Sprintf("%t", c.Bot.ShowToolActions) },
+	},
+	"maxconcurrent": {
+		setter: func(c *config.Configuration, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 8 {
+				return fmt.Errorf("invalid value for maxconcurrent. Please provide a whole number from 1 to 8")
+			}
+			c.Bot.MaxConcurrent = n
+			core.SetConcurrency(n)
+			return nil
+		},
+		getter: func(c *config.Configuration) string { return strconv.Itoa(c.Bot.MaxConcurrent) },
 	},
 	"sessionduration": {
 		setter: func(c *config.Configuration, v string) error {

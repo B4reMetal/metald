@@ -1,13 +1,37 @@
 .vscode
 *.env
-/soulshack
+/metald
 __debug_bin*
 perp.json
 .history/*
-examples/soulshack.yml
+examples/metald.yml
 RELEASE_NOTES.md
-examples/tools/url.go
 play.json
-examples/tools/url
-examples/tools/mcp.json
 .gocache/
+config.yml
+testbed/
+ignores.json
+config-overrides.json
+
+# backups of ignored files must be ignored too - "*.env" and "config.yml"
+# match exact endings only, so .env.bak-* and config.yml.bak-* slipped through
+*.bak
+*.bak-*
+*.bak.*
+*.bak[0-9]*
+# runtime data: memories about real channel users, persisted overrides
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+reminders.json
+
+# local dirs for examples/docker-compose.yml
+examples/config/
+examples/plugins/
+examples/data/
+
+# site-specific tools: only the README is shared
+custom-plugins/*
+!custom-plugins/README.md

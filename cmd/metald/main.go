@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package main
 
 //  ____                    _   ____    _                      _
@@ -16,8 +20,8 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"pkdindustries/soulshack/internal/bot"
-	"pkdindustries/soulshack/internal/config"
+	"B4reMetal/metald/internal/bot"
+	"B4reMetal/metald/internal/config"
 )
 
 func main() {
@@ -28,12 +32,12 @@ func main() {
 	defer cancel()
 
 	cmd := &cli.Command{
-		Name:    "soulshack",
+		Name:    "metald",
 		Usage:   "because real people are overrated",
-		Version: bot.Version + " - http://github.com/pkdindustries/soulshack",
+		Version: bot.Version + " - https://github.com/B4reMetal/metald",
 		Flags:   config.GetFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
-			if len(os.Args) == 1 {
+			if len(os.Args) == 1 && c.String("config") == "" {
 				return cli.ShowAppHelp(c)
 			}
 			// Use our cancellable context, not the CLI's context

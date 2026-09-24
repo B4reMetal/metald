@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+# SPDX-License-Identifier: GPL-3.0-only
 
 import sys
 import json

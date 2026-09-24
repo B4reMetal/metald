@@ -1,18 +1,24 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package irc
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/alexschlessinger/pollytool/sessions"
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/config"
-	"pkdindustries/soulshack/internal/core"
+	"B4reMetal/metald/internal/config"
+	"B4reMetal/metald/internal/core"
 )
 
 // ChatContextInterface provides all context needed for handling IRC messages
@@ -69,13 +75,22 @@ func NewChatContext(parentctx context.Context, config *config.Configuration, sys
 	}
 
 	if ctx.IsAddressed() {
-		ctx.args = ctx.args[1:]
+		trigger := config.Bot.Trigger
+		if trigger == "" {
+			trigger = ircclient.GetNick()
+		}
+		// Only strip a genuine leading trigger; CheckAddressed also matches mid-message, and then
+		// args stay the full message.
+		if remainder, ok := StripLeadingTrigger(e.Last(), trigger); ok {
+			ctx.args = remainder
+		}
 	}
 
 	key := channel
 	if !girc.IsValidChannel(key) {
 		key = e.Source.Name
 	}
+	key = scopeKey(config.Server.Name, key)
 
 	session, err := ctx.Sys.GetSessionStore().Get(key)
 	if err != nil {
@@ -113,8 +128,13 @@ func (c ChatContext) Topic(channel, topic string) bool {
 	return true
 }
 
+// IsAddressed returns true if the message activates the bot.
 func (s ChatContext) IsAddressed() bool {
-	return CheckAddressed(s.event.Last(), s.client.GetNick())
+	trigger := s.Config.Bot.Trigger
+	if trigger == "" {
+		trigger = s.client.GetNick()
+	}
+	return CheckAddressed(s.event.Last(), trigger)
 }
 
 func (c ChatContext) Nick(nickname string) bool {
@@ -148,9 +168,22 @@ func (c ChatContext) GetSession() sessions.Session {
 	return c.Session
 }
 
+// GetNetwork names the network this request came from, for scoping data that must not cross
+// networks.
+func (c ChatContext) GetNetwork() string {
+	if c.Config == nil || c.Config.Server == nil {
+		return ""
+	}
+	return c.Config.Server.Name
+}
+
 func (c ChatContext) GetBotNick() string {
 	return c.client.GetNick()
 }
+
+// GetRequestID is the bot's own id for this request, used so a command can
+// exclude itself when cancelling in-flight work.
+func (c ChatContext) GetRequestID() string { return c.requestID }
 
 func (c ChatContext) GetSource() string {
 	return c.event.Source.Name
@@ -160,17 +193,68 @@ func (c ChatContext) IsAdmin() bool {
 	hostmask := c.event.Source.String()
 	c.logger.Debug("admin_check", "hostmask", hostmask)
 	isAdmin := CheckAdmin(hostmask, c.Config.Bot.Admins)
-	if isAdmin && len(c.Config.Bot.Admins) == 0 {
-		c.logger.Debug("admin_check_warning")
-	} else if isAdmin {
+	if isAdmin {
 		c.logger.Debug("admin_verified", "hostmask", hostmask)
 	}
 	return isAdmin
 }
 
-func (c ChatContext) Reply(message string) {
-	c.client.Cmd.Reply(*c.event, message)
+// leakedToolCall matches the shapes a model uses when it writes a tool call out as prose instead of
+// emitting a structured one.
+var leakedToolCall = regexp.MustCompile(
+	`(?i)(</?tool_call|</?function_call|</?function\b|</?parameter\b|</?invoke\b|"tool_calls"\s*:)`)
 
+// LooksLikeToolCall reports whether text contains tool-call wire format.
+func LooksLikeToolCall(s string) bool { return leakedToolCall.MatchString(s) }
+
+func (c ChatContext) Reply(message string) {
+	// Last line of defence against replying to someone who was ignored
+	if reason, quiet := c.silenced(); quiet {
+		c.logger.Debug("reply_suppressed", "reason", reason, "message", message)
+		return
+	}
+
+	// Never let the model's own tool-call wire format reach the channel.
+	if leakedToolCall.MatchString(message) {
+		c.logger.Warn("reply_suppressed_tool_syntax", "message", message)
+		return
+	}
+
+	// Same idea for a bare reasoning marker.
+	if bareThinkMarker.MatchString(message) {
+		c.logger.Warn("reply_suppressed_think_marker", "message", message)
+		return
+	}
+
+	c.logger.Debug("reply_sent", "message", message)
+
+	message = RenderIRCFormatting(message)
+	if prefix := c.Config.EffectiveResponsePrefix(); prefix != "" {
+		message = prefix + " " + message
+	}
+	c.client.Cmd.Reply(*c.event, message)
+}
+
+// silenced reports whether this request may write to the channel at all, and why not.
+func (c ChatContext) silenced() (string, bool) {
+	if c.suppressed() {
+		return "source_ignored", true
+	}
+	if errors.Is(c.Err(), context.Canceled) {
+		return "request_cancelled", true
+	}
+	return "", false
+}
+
+// suppressed reports whether output for this request should be dropped.
+func (c ChatContext) suppressed() bool {
+	if c.event == nil || c.event.Source == nil {
+		return false
+	}
+	if !core.Ignores().IsIgnored(c.GetNetwork(), c.event.Source.Name) {
+		return false
+	}
+	return !c.IsAdmin()
 }
 
 func (c ChatContext) SendAction(target, message string) {
@@ -178,6 +262,12 @@ func (c ChatContext) SendAction(target, message string) {
 }
 
 func (c ChatContext) ReplyAction(message string) {
+	// Same two gates as Reply.
+	if reason, quiet := c.silenced(); quiet {
+		c.logger.Debug("action_suppressed", "reason", reason, "message", message)
+		return
+	}
+
 	target := c.event.Params[0]
 	if !girc.IsValidChannel(target) {
 		// For PMs, send a regular message instead of an action
@@ -266,7 +356,13 @@ func (c ChatContext) GetChannelUsers(channel string) []core.ChannelUser {
 	return result
 }
 
+// GetLockKey identifies the conversation this request belongs to, for serializing requests and for
+// "+reset".
 func (c ChatContext) GetLockKey() string {
+	return scopeKey(c.Config.Server.Name, c.unscopedLockKey())
+}
+
+func (c ChatContext) unscopedLockKey() string {
 	if len(c.event.Params) > 0 && girc.IsValidChannel(c.event.Params[0]) {
 		return c.Config.Server.Channel
 	}
@@ -274,6 +370,14 @@ func (c ChatContext) GetLockKey() string {
 		return c.event.Source.Name
 	}
 	return c.Config.Server.Channel
+}
+
+// scopeKey prefixes a key with its network.
+func scopeKey(network, key string) string {
+	if network == "" {
+		return key
+	}
+	return network + "/" + key
 }
 
 func (c ChatContext) IsOp(channel, nick string) bool {

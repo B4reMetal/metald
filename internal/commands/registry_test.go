@@ -1,11 +1,15 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
 	"strings"
 	"testing"
 
-	"pkdindustries/soulshack/internal/irc"
-	mocktest "pkdindustries/soulshack/internal/testing"
+	"B4reMetal/metald/internal/irc"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 // mockCommand is a simple test command

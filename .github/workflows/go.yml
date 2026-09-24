@@ -56,19 +56,19 @@ jobs:
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: amd64
-        run: go build -o ${{ github.event.repository.name }}-linux-amd64 ./cmd/soulshack
+        run: go build -o ${{ github.event.repository.name }}-linux-amd64 ./cmd/metald
       - name: Build release - Linux arm64
         env:
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: arm64
-        run: go build -o ${{ github.event.repository.name }}-linux-arm64 ./cmd/soulshack
+        run: go build -o ${{ github.event.repository.name }}-linux-arm64 ./cmd/metald
       - name: Build release - macOS arm64
         env:
           CGO_ENABLED: 0
           GOOS: darwin
           GOARCH: arm64
-        run: go build -o ${{ github.event.repository.name }}-darwin-arm64 ./cmd/soulshack
+        run: go build -o ${{ github.event.repository.name }}-darwin-arm64 ./cmd/metald
       - name: Build release - Windows amd64
         env:
           CGO_ENABLED: 0
@@ -76,7 +76,7 @@ jobs:
           GOARCH: amd64
         run: >-
           go build -o
-          ${{ github.event.repository.name }}-windows-amd64.exe ./cmd/soulshack
+          ${{ github.event.repository.name }}-windows-amd64.exe ./cmd/metald
       - name: Package examples directory
         run: tar czf examples.tar.gz examples/
       - name: Upload examples tarball

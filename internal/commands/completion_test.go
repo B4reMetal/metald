@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
@@ -5,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	mocktest "pkdindustries/soulshack/internal/testing"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestCompletionCommand_BasicFlow(t *testing.T) {

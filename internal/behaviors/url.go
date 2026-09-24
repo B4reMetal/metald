@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package behaviors
 
 import (
@@ -6,9 +10,9 @@ import (
 
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/core"
-	"pkdindustries/soulshack/internal/irc"
-	"pkdindustries/soulshack/internal/llm"
+	"B4reMetal/metald/internal/core"
+	"B4reMetal/metald/internal/irc"
+	"B4reMetal/metald/internal/llm"
 )
 
 var urlPattern = regexp.MustCompile(`^https?://[^\s]+`)
@@ -29,6 +33,9 @@ func (b *URLBehavior) Check(ctx irc.ChatContextInterface, event *girc.Event) boo
 	if !cfg.Bot.URLWatcher {
 		return false
 	}
+	if ctx.IsPrivate() && cfg.Bot.IgnorePrivate {
+		return false
+	}
 	if ctx.IsAddressed() {
 		return false
 	}
@@ -42,7 +49,12 @@ func (b *URLBehavior) Check(ctx irc.ChatContextInterface, event *girc.Event) boo
 func (b *URLBehavior) Execute(ctx irc.ChatContextInterface, event *girc.Event) {
 	core.WithRequestLock(ctx, ctx.GetLockKey(), "url", func() {
 		cfg := ctx.GetConfig()
-		prompt := fmt.Sprintf("(nick:%s) %s", ctx.GetSource(), event.Last())
+		stripped, frames := irc.StripInjectionFrames(event.Last())
+		if frames > 0 {
+			ctx.GetLogger().Warn("injection_frames_stripped",
+				"count", frames, "source", ctx.GetSource())
+		}
+		prompt := fmt.Sprintf("(nick:%s) %s", ctx.GetSource(), irc.SanitizeUserMessage(stripped))
 
 		silent := cfg.Bot.URLWatcherSilent
 		execCtx := irc.ChatContextInterface(ctx)

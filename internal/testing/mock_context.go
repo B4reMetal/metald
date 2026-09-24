@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package testing
 
 import (
@@ -8,8 +12,8 @@ import (
 	"github.com/alexschlessinger/pollytool/sessions"
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/config"
-	"pkdindustries/soulshack/internal/core"
+	"B4reMetal/metald/internal/config"
+	"B4reMetal/metald/internal/core"
 )
 
 // MockChatContext implements core.ChatContextInterface for testing
@@ -20,7 +24,7 @@ type MockChatContext struct {
 	Addressed bool
 	Admin     bool
 	Private   bool
-Command   string
+	Command   string
 	Source    string
 	Args      []string
 
@@ -31,14 +35,14 @@ Command   string
 	JoinWithKeyCalls []JoinWithKeyCall
 	NickCalls        []string
 	FatalErrors      []error
-	KickCalls       []KickCall
-	SetModeCalls    []ModeCall
-	TopicCalls      []TopicCall
-	OperCalls       []OperCall
-	BanCalls        []string
-	UnbanCalls      []string
-	InviteCalls     []InviteCall
-	SendActionCalls []ActionCall
+	KickCalls        []KickCall
+	SetModeCalls     []ModeCall
+	TopicCalls       []TopicCall
+	OperCalls        []OperCall
+	BanCalls         []string
+	UnbanCalls       []string
+	InviteCalls      []InviteCall
+	SendActionCalls  []ActionCall
 
 	// Injected dependencies
 	session sessions.Session
@@ -76,7 +80,7 @@ var _ core.ChatContextInterface = (*MockChatContext)(nil)
 func NewMockContext() *MockChatContext {
 	return &MockChatContext{
 		Context:      context.Background(),
-Addressed:    true,
+		Addressed:    true,
 		Admin:        false,
 		Private:      false,
 		Source:       "testuser",
@@ -89,7 +93,7 @@ Addressed:    true,
 		Users:        make(map[string]*core.UserInfo),
 		Channels:     make(map[string]*core.ChannelInfo),
 		ChannelUsers: make(map[string][]core.ChannelUser),
-		BotNick:      "soulshack",
+		BotNick:      "metald",
 	}
 }
 
@@ -286,6 +290,13 @@ func (m *MockChatContext) GetChannelUsers(channel string) []core.ChannelUser {
 	return m.ChannelUsers[channel]
 }
 
+func (m *MockChatContext) GetNetwork() string {
+	if m.cfg != nil && m.cfg.Server != nil {
+		return m.cfg.Server.Name
+	}
+	return ""
+}
+
 func (m *MockChatContext) GetBotNick() string {
 	return m.BotNick
 }
@@ -351,3 +362,7 @@ func (m *MockChatContext) LastReply() string {
 func (m *MockChatContext) ReplyCount() int {
 	return len(m.Replies)
 }
+
+// GetRequestID returns a stable id for the mock's request, so tests can
+// exercise self-exclusion in cancellation.
+func (m *MockChatContext) GetRequestID() string { return "mock-request" }

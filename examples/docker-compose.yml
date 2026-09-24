@@ -1,0 +1,9 @@
+services:
+  metald:
+    image: metald:dev
+    build: ..
+    restart: unless-stopped
+    volumes:
+      - ./config:/config      # config.yml + .env
+      - ./plugins:/plugins    # your own tools, referenced as /plugins/<name>
+      - ./data:/data          # memories, reminders, ignores, runtime overrides

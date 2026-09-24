@@ -1,0 +1,12 @@
+metald is a fork of soulshack and is distributed under the GNU General Public
+License, version 3 (see license.md).
+
+Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+    https://github.com/pkdindustries/soulshack
+
+Copyright (C) 2026 BareMetal
+    the metald modifications and additions; https://github.com/B4reMetal/metald
+
+Every source file carries an SPDX header naming its holder(s). Files that came
+from soulshack and were changed in this fork say so, with the year, as GPLv3
+section 5(a) requires. The full change history is in git.

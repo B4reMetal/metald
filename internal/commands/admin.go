@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
@@ -5,13 +9,13 @@ import (
 	"slices"
 	"strings"
 
-	"pkdindustries/soulshack/internal/irc"
+	"B4reMetal/metald/internal/irc"
 )
 
-// AdminCommand handles the /admin command for managing bot administrators
+// AdminCommand handles the +admins command for managing bot administrators
 type AdminCommand struct{}
 
-func (c *AdminCommand) Name() string    { return "/admins" }
+func (c *AdminCommand) Name() string    { return "+admins" }
 func (c *AdminCommand) AdminOnly() bool { return true }
 
 func (c *AdminCommand) Execute(ctx irc.ChatContextInterface) {
@@ -25,7 +29,7 @@ func (c *AdminCommand) Execute(ctx irc.ChatContextInterface) {
 
 	subcommand := args[1]
 	if len(args) < 3 {
-		ctx.Reply("Usage: /admins <add|remove> <hostmask>")
+		ctx.Reply("Usage: +admins <add|remove> <hostmask>")
 		return
 	}
 	hostmask := strings.Join(args[2:], " ")
@@ -36,7 +40,7 @@ func (c *AdminCommand) Execute(ctx irc.ChatContextInterface) {
 	case "remove":
 		c.removeAdmin(ctx, hostmask)
 	default:
-		ctx.Reply(fmt.Sprintf("Unknown subcommand: %s. Usage: /admins [list|add|remove] <hostmask>", subcommand))
+		ctx.Reply(fmt.Sprintf("Unknown subcommand: %s. Usage: +admins [list|add|remove] <hostmask>", subcommand))
 	}
 
 	cfg := ctx.GetConfig() // refresh after modification
@@ -54,7 +58,7 @@ func (c *AdminCommand) listAdmins(ctx irc.ChatContextInterface) {
 
 func (c *AdminCommand) addAdmin(ctx irc.ChatContextInterface, hostmask string) {
 	if hostmask == "" {
-		ctx.Reply("Usage: /admins add <hostmask>")
+		ctx.Reply("Usage: +admins add <hostmask>")
 		return
 	}
 
@@ -72,13 +76,14 @@ func (c *AdminCommand) addAdmin(ctx irc.ChatContextInterface, hostmask string) {
 	}
 
 	cfg.Bot.Admins = append(cfg.Bot.Admins, hostmask)
+	PersistAdmins(cfg.Bot.Admins)
 	ctx.Reply(fmt.Sprintf("Added admin: %s", hostmask))
 	ctx.GetSession().Clear()
 }
 
 func (c *AdminCommand) removeAdmin(ctx irc.ChatContextInterface, hostmask string) {
 	if hostmask == "" {
-		ctx.Reply("Usage: /admins remove <hostmask>")
+		ctx.Reply("Usage: +admins remove <hostmask>")
 		return
 	}
 
@@ -92,6 +97,7 @@ func (c *AdminCommand) removeAdmin(ctx irc.ChatContextInterface, hostmask string
 	}
 
 	cfg.Bot.Admins = slices.Delete(cfg.Bot.Admins, idx, idx+1)
+	PersistAdmins(cfg.Bot.Admins)
 	ctx.Reply(fmt.Sprintf("Removed admin: %s", hostmask))
 	ctx.GetSession().Clear()
 }

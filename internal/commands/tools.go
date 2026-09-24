@@ -1,19 +1,24 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 
-	"pkdindustries/soulshack/internal/irc"
+	"B4reMetal/metald/internal/irc"
 
 	"github.com/alexschlessinger/pollytool/tools"
 )
 
-// ToolsCommand handles the /tools command for managing tools
+// ToolsCommand handles the +tools command for managing tools
 type ToolsCommand struct{}
 
-func (c *ToolsCommand) Name() string    { return "/tools" }
+func (c *ToolsCommand) Name() string    { return "+tools" }
 func (c *ToolsCommand) AdminOnly() bool { return false } // We handle permissions internally
 
 func (c *ToolsCommand) Execute(ctx irc.ChatContextInterface) {
@@ -21,7 +26,7 @@ func (c *ToolsCommand) Execute(ctx irc.ChatContextInterface) {
 
 	// If no arguments, list tools (equivalent to old /get tools)
 	if len(args) < 2 {
-		ctx.Reply("Usage: /tools [list|load|rm] <args>")
+		ctx.Reply("Usage: +tools [list|load|rm|restrict|unrestrict] <args>")
 		return
 	}
 
@@ -52,9 +57,116 @@ func (c *ToolsCommand) Execute(ctx irc.ChatContextInterface) {
 		fallthrough
 	case "remove":
 		c.removeTool(ctx, rest)
+	case "restrict":
+		c.setRestriction(ctx, rest, true)
+	case "unrestrict":
+		fallthrough
+	case "allow":
+		c.setRestriction(ctx, rest, false)
 	default:
-		ctx.Reply("Usage: /tools [list|load|rm] <args>")
+		ctx.Reply("Usage: +tools [list|load|rm|restrict|unrestrict] <args>")
 	}
+}
+
+// setRestriction moves tools in or out of admin-only at runtime, without a restart.
+func (c *ToolsCommand) setRestriction(ctx irc.ChatContextInterface, pattern string, restrict bool) {
+	verb := "unrestrict"
+	if restrict {
+		verb = "restrict"
+	}
+	if pattern == "" {
+		ctx.Reply(fmt.Sprintf("Usage: +tools %s <tool|namespace|pattern>", verb))
+		return
+	}
+
+	registry := ctx.GetSystem().GetToolRegistry()
+	matches := matchToolNames(registry.All(), pattern)
+	if len(matches) == 0 {
+		ctx.Reply(fmt.Sprintf("No tools matched: %s", pattern))
+		return
+	}
+
+	var changed []string
+	for _, name := range matches {
+		tool, ok := registry.Get(name)
+		if !ok {
+			continue
+		}
+		if irc.IsAdminOnly(tool) == restrict {
+			continue // already in the requested state
+		}
+		if restrict {
+			registry.Register(irc.NewAdminOnlyTool(tool))
+		} else {
+			registry.Register(irc.UnwrapAdminOnly(tool))
+		}
+		changed = append(changed, name)
+	}
+
+	if len(changed) == 0 {
+		state := "unrestricted"
+		if restrict {
+			state = "already admin-only"
+		}
+		ctx.Reply(fmt.Sprintf("No change - matched tools are %s", state))
+		return
+	}
+
+	syncAdminToolsConfig(ctx, changed, restrict)
+	PersistAdminTools(ctx.GetConfig().Bot.AdminTools)
+	ctx.GetLogger().Info("tool_restriction_changed",
+		"tools", strings.Join(changed, ","), "admin_only", restrict, "by", ctx.GetSource())
+
+	if restrict {
+		ctx.Reply(fmt.Sprintf("Restricted to admins: %s", strings.Join(changed, ", ")))
+	} else {
+		ctx.Reply(fmt.Sprintf("Available to everyone: %s", strings.Join(changed, ", ")))
+	}
+}
+
+// syncAdminToolsConfig keeps cfg.Bot.AdminTools consistent with the live registry, so "+get
+// admintools" reflects reality.
+func syncAdminToolsConfig(ctx irc.ChatContextInterface, names []string, restrict bool) {
+	cfg := ctx.GetConfig()
+	current := make(map[string]bool, len(cfg.Bot.AdminTools))
+	for _, n := range cfg.Bot.AdminTools {
+		current[n] = true
+	}
+	for _, n := range names {
+		if restrict {
+			current[n] = true
+		} else {
+			delete(current, n)
+		}
+	}
+	updated := make([]string, 0, len(current))
+	for n := range current {
+		updated = append(updated, n)
+	}
+	sort.Strings(updated)
+	cfg.Bot.AdminTools = updated
+}
+
+// matchToolNames resolves an exact name, a bare namespace, or a wildcard
+// pattern against the loaded tools.
+func matchToolNames(all []tools.Tool, pattern string) []string {
+	// A bare word with no wildcard and no "__" means "the whole namespace".
+	if !strings.Contains(pattern, "*") && !strings.Contains(pattern, "__") {
+		pattern += "__*"
+	}
+
+	var matched []string
+	for _, tool := range all {
+		name := tool.GetName()
+		if name == pattern {
+			return []string{name}
+		}
+		if ok, _ := path.Match(pattern, name); ok {
+			matched = append(matched, name)
+		}
+	}
+	sort.Strings(matched)
+	return matched
 }
 
 func (c *ToolsCommand) listTools(ctx irc.ChatContextInterface) {
@@ -91,7 +203,13 @@ func (c *ToolsCommand) listNamespace(ctx irc.ChatContextInterface, namespace str
 		name := tool.GetName()
 		if strings.HasPrefix(name, prefix) {
 			_, bareName := parseToolName(name)
-			toolNames = append(toolNames, namespace+"__"+bareName)
+			entry := namespace + "__" + bareName
+			// Mark restrictions so the listing shows who can actually use
+			// each tool, which now changes at runtime via +tools restrict.
+			if irc.IsAdminOnly(tool) {
+				entry += " [admin]"
+			}
+			toolNames = append(toolNames, entry)
 		}
 	}
 
@@ -116,7 +234,7 @@ func parseToolName(name string) (namespace, bareName string) {
 
 func (c *ToolsCommand) addTool(ctx irc.ChatContextInterface, toolPath string) {
 	if toolPath == "" {
-		ctx.Reply("Usage: /tools add <path>")
+		ctx.Reply("Usage: +tools add <path>")
 		return
 	}
 
@@ -147,7 +265,7 @@ func formatLoadResult(result tools.LoadResult) string {
 
 func (c *ToolsCommand) removeTool(ctx irc.ChatContextInterface, pattern string) {
 	if pattern == "" {
-		ctx.Reply("Usage: /tools remove <name or pattern>")
+		ctx.Reply("Usage: +tools remove <name or pattern>")
 		return
 	}
 

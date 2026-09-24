@@ -1,7 +1,13 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
-	"pkdindustries/soulshack/internal/irc"
+	"strings"
+
+	"B4reMetal/metald/internal/irc"
 )
 
 // Command defines the interface for bot commands
@@ -9,6 +15,28 @@ type Command interface {
 	Name() string
 	Execute(ctx irc.ChatContextInterface)
 	AdminOnly() bool
+}
+
+// LockRequired is an optional interface for a +command that must queue behind
+// the request lock, e.g. one that calls the model.
+type LockRequired interface {
+	RequiresLock() bool
+}
+
+// BypassesLock reports whether a command runs without the request lock. Named +commands do, so
+// admins can act during a long render; chat to the model (the default command) never does.
+func (r *Registry) BypassesLock(name string) bool {
+	if name == "" {
+		return false
+	}
+	cmd, ok := r.commands[name]
+	if !ok || cmd == r.defaultCommand {
+		return false
+	}
+	if l, ok := cmd.(LockRequired); ok && l.RequiresLock() {
+		return false
+	}
+	return true
 }
 
 // Registry manages command registration and dispatch
@@ -58,9 +86,17 @@ func (r *Registry) Dispatch(ctx irc.ChatContextInterface) bool {
 
 	// Check admin permission
 	if cmd.AdminOnly() && !ctx.IsAdmin() {
+		ctx.GetLogger().Info("command_denied", "command", cmdName, "source", ctx.GetSource())
 		ctx.Reply("You don't have permission to perform this action.")
 		return true
 	}
+
+	args := ctx.GetArgs()
+	ctx.GetLogger().Info("command_executed",
+		"command", cmdName,
+		"args", strings.Join(args[min(1, len(args)):], " "),
+		"source", ctx.GetSource(),
+	)
 
 	cmd.Execute(ctx)
 	return true

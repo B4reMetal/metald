@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package irc
 
 import (
@@ -80,4 +84,12 @@ func (c *Chunker) Flush() {
 		c.output <- c.buffer.String()
 		c.buffer.Reset()
 	}
+}
+
+// Discard drops the buffered content without emitting it, returning how many bytes were thrown
+// away.
+func (c *Chunker) Discard() int {
+	n := c.buffer.Len()
+	c.buffer.Reset()
+	return n
 }

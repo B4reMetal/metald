@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package irc
 
 import (
@@ -5,30 +9,89 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
-// CheckAddressed returns true if message starts with botNick followed by a separator or end of string.
-func CheckAddressed(message, botNick string) bool {
-	// If botNick is empty, it matches everything (legacy behavior from HasPrefix)
-	if botNick == "" {
+// isTriggerWordChar reports whether r is part of a word, so a trigger matches whole words
+// only, never inside a longer word.
+func isTriggerWordChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
+// StripLeadingTrigger removes trigger from the very start of message, if it appears there as a
+// bounded whole word/phrase, and returns the remaining whitespace-tokenized words.
+func StripLeadingTrigger(message, trigger string) ([]string, bool) {
+	fields := strings.Fields(message)
+	trigWords := strings.Fields(trigger)
+	if len(trigWords) == 0 || len(fields) < len(trigWords) {
+		return nil, false
+	}
+
+	for i, w := range trigWords[:len(trigWords)-1] {
+		if !strings.EqualFold(fields[i], w) {
+			return nil, false
+		}
+	}
+
+	last := fields[len(trigWords)-1]
+	wantLast := trigWords[len(trigWords)-1]
+	switch {
+	case strings.EqualFold(last, wantLast):
+		// exact match: trigger word is its own token
+	case len(last) == len(wantLast)+1 && strings.EqualFold(last[:len(wantLast)], wantLast):
+		// exactly one trailing separator glued on, e.g. "bot:" or "bot,"
+		sep := last[len(wantLast)]
+		if sep != ':' && sep != ',' {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+
+	return fields[len(trigWords):], true
+}
+
+// CheckAddressed reports whether trigger appears anywhere in message as a whole word or
+// phrase, case-insensitively.
+func CheckAddressed(message, trigger string) bool {
+	// If trigger is empty, it matches everything (legacy behavior)
+	if trigger == "" {
 		return true
 	}
-	if !strings.HasPrefix(message, botNick) {
+
+	msg := []rune(message)
+	trig := []rune(trigger)
+	if len(trig) == 0 || len(trig) > len(msg) {
 		return false
 	}
-	if len(message) == len(botNick) {
-		return true
+
+	for i := 0; i+len(trig) <= len(msg); i++ {
+		match := true
+		for j, r := range trig {
+			if unicode.ToLower(msg[i+j]) != unicode.ToLower(r) {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+
+		beforeOK := i == 0 || !isTriggerWordChar(msg[i-1])
+		after := i + len(trig)
+		afterOK := after == len(msg) || !isTriggerWordChar(msg[after])
+		if beforeOK && afterOK {
+			return true
+		}
 	}
-	// Check that the next character is a separator
-	next := message[len(botNick)]
-	return next == ' ' || next == ':' || next == ','
+	return false
 }
 
 // CheckAdmin returns true if hostmask matches any admin in the list.
-// WARNING: Returns true if adminList is empty (legacy behavior - everyone is admin).
+// An empty list means nobody is admin, never everybody.
 func CheckAdmin(hostmask string, adminList []string) bool {
 	if len(adminList) == 0 {
-		return true
+		return false
 	}
 	for _, admin := range adminList {
 		if admin == hostmask {
@@ -121,4 +184,41 @@ func ValidateHostmask(hostmask string) error {
 	}
 
 	return nil
+}
+
+// nickSpoof matches text imitating the "(nick:x)" identity prefix metald
+// prepends to every message before handing it to the model.
+var nickSpoof = regexp.MustCompile(`(?i)[\(\[]\s*nick\s*:`)
+
+// SanitizeUserMessage neutralises attempts to forge the identity prefix.
+func SanitizeUserMessage(msg string) string {
+	return nickSpoof.ReplaceAllStringFunc(msg, func(m string) string {
+		// "(nick:" -> "(nick :" - still legible, no longer parses as ours.
+		return strings.TrimSuffix(m, ":") + " :"
+	})
+}
+
+// Structural markers that models use to delimit their own reasoning, tool calls, and conversation
+// roles.
+var injectionFrame = regexp.MustCompile(
+	`(?i)</?\s*(think|thinking|thought|reasoning|scratchpad|` +
+		`function|function_call|function_results|tool|tool_call|tool_result|` +
+		`system|assistant|user|output|answer)\s*>`)
+
+// ChatML-style turn markers: <|im_start|>, <|im_end|>, <|system|> and friends.
+var chatMLMarker = regexp.MustCompile(`<\|[^|>]{0,40}\|>`)
+
+// StripInjectionFrames removes pseudo-structural tags from a user message and reports how many it
+// removed.
+func StripInjectionFrames(msg string) (string, int) {
+	count := len(injectionFrame.FindAllString(msg, -1)) +
+		len(chatMLMarker.FindAllString(msg, -1))
+	if count == 0 {
+		return msg, 0
+	}
+
+	cleaned := injectionFrame.ReplaceAllString(msg, " ")
+	cleaned = chatMLMarker.ReplaceAllString(cleaned, " ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return cleaned, count
 }

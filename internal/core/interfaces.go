@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package core
 
 import (
@@ -8,7 +12,7 @@ import (
 	"github.com/alexschlessinger/pollytool/sessions"
 	"github.com/alexschlessinger/pollytool/tools"
 
-	"pkdindustries/soulshack/internal/config"
+	"B4reMetal/metald/internal/config"
 )
 
 // ChatContextInterface provides all context needed for handling IRC messages
@@ -21,6 +25,7 @@ type ChatContextInterface interface {
 	IsPrivate() bool
 	GetCommand() string
 	GetSource() string
+	GetRequestID() string
 	GetArgs() []string
 
 	// Responder methods
@@ -47,6 +52,9 @@ type ChatContextInterface interface {
 	GetChannelUsers(channel string) []ChannelUser
 	GetBotNick() string
 	GetLockKey() string
+	// GetNetwork names the IRC network this request arrived on. Empty on a
+	// single-network bot. Scopes per-network data such as memories.
+	GetNetwork() string
 	IsOp(channel, nick string) bool
 
 	// Runtime methods

@@ -1,14 +1,14 @@
-# Soulshack Architecture
+# Metald Architecture
 
 ## System Overview
 
-Soulshack is an IRC bot designed to bridge traditional IRC chat with modern LLM capabilities. It uses a modular architecture to handle IRC events, manage sessions, and invoke LLM agents.
+Metald is an IRC bot designed to bridge traditional IRC chat with modern LLM capabilities. It uses a modular architecture to handle IRC events, manage sessions, and invoke LLM agents.
 
 A key feature is its **Unified Tool System**, which abstracts differences between native Go tools, shell scripts, and MCP servers, allowing the LLM to use them interchangeably.
 
 ## Component Diagram
 
-<img src="images/diagram.png" alt="Soulshack Architecture" width="25%">
+<img src="images/diagram.png" alt="Metald Architecture" width="25%">
 
 ## Request Lifecycle
 

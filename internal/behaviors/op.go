@@ -1,3 +1,7 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package behaviors
 
 import (
@@ -6,17 +10,15 @@ import (
 
 	"github.com/lrstanley/girc"
 
-	"pkdindustries/soulshack/internal/core"
-	"pkdindustries/soulshack/internal/irc"
-	"pkdindustries/soulshack/internal/llm"
+	"B4reMetal/metald/internal/core"
+	"B4reMetal/metald/internal/irc"
+	"B4reMetal/metald/internal/llm"
 )
 
 const opWatcherPrefixes = "(qaohv)~&%@+"
 
-// OpBehavior responds when the bot receives +o or -o (operator status change)
-type OpBehavior struct {
-	BotNick string
-}
+// OpBehavior responds when the bot receives +o or -o (operator status change).
+type OpBehavior struct{}
 
 func (b *OpBehavior) Name() string {
 	return "op"
@@ -32,7 +34,7 @@ func (b *OpBehavior) Check(ctx irc.ChatContextInterface, event *girc.Event) bool
 		return false
 	}
 
-	_, ok := opActionForNick(event, b.BotNick)
+	_, ok := opActionForNick(event, ctx.GetBotNick())
 	return ok
 }
 
@@ -41,7 +43,7 @@ func (b *OpBehavior) Execute(ctx irc.ChatContextInterface, event *girc.Event) {
 		cfg := ctx.GetConfig()
 		changedBy := event.Source.Name
 
-		action, ok := opActionForNick(event, b.BotNick)
+		action, ok := opActionForNick(event, ctx.GetBotNick())
 		if !ok {
 			return
 		}

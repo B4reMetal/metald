@@ -1,9 +1,13 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package testing
 
 import (
 	"time"
 
-	"pkdindustries/soulshack/internal/config"
+	"B4reMetal/metald/internal/config"
 )
 
 // DefaultTestConfig returns a minimal configuration for testing
@@ -25,6 +29,15 @@ func DefaultTestConfig() *config.Configuration {
 			Tools:              []string{},
 			ShowThinkingAction: false,
 			ShowToolActions:    false,
+			PromptFloor:        true,
+			// Non-empty so the mock passes the startup check; content is
+			// irrelevant to tests that don't assert on it.
+			FloorPrompt:        "test floor prompt\n\n",
+			GatekeeperPreamble: "test gatekeeper preamble",
+			GatekeeperPolicy:   "test gatekeeper policy",
+			ClassifyPreamble:   "test classify preamble",
+			ReplyScreenPolicy:  "test reply screen policy",
+			MemoryPolicy:       "test memory policy",
 		},
 		Model: &config.ModelConfig{
 			Model:          "test/model",

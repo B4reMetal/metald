@@ -1,11 +1,15 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
 	"strings"
 	"testing"
 
-	"pkdindustries/soulshack/internal/irc"
-	mocktest "pkdindustries/soulshack/internal/testing"
+	"B4reMetal/metald/internal/irc"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestHelpCommand_ListsAllForAdmin(t *testing.T) {
@@ -22,7 +26,7 @@ func TestHelpCommand_ListsAllForAdmin(t *testing.T) {
 
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
-		WithArgs("/help")
+		WithArgs("+help")
 
 	helpCmd.Execute(ctx)
 
@@ -55,7 +59,7 @@ func TestHelpCommand_HidesAdminOnlyForNonAdmin(t *testing.T) {
 
 	ctx := mocktest.NewMockContext().
 		WithAdmin(false).
-		WithArgs("/help")
+		WithArgs("+help")
 
 	helpCmd.Execute(ctx)
 
@@ -81,6 +85,6 @@ type testCommand struct {
 	adminOnly bool
 }
 
-func (c *testCommand) Name() string                           { return c.name }
-func (c *testCommand) AdminOnly() bool                        { return c.adminOnly }
-func (c *testCommand) Execute(ctx irc.ChatContextInterface)   {}
+func (c *testCommand) Name() string                         { return c.name }
+func (c *testCommand) AdminOnly() bool                      { return c.adminOnly }
+func (c *testCommand) Execute(ctx irc.ChatContextInterface) {}

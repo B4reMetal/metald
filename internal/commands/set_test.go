@@ -1,16 +1,20 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// Modified 2026 by BareMetal
+// SPDX-License-Identifier: GPL-3.0-only
+
 package commands
 
 import (
 	"strings"
 	"testing"
 
-	mocktest "pkdindustries/soulshack/internal/testing"
+	mocktest "B4reMetal/metald/internal/testing"
 )
 
 func TestSetCommand_Name(t *testing.T) {
 	cmd := &SetCommand{}
-	if cmd.Name() != "/set" {
-		t.Errorf("expected /set, got %s", cmd.Name())
+	if cmd.Name() != "+set" {
+		t.Errorf("expected +set, got %s", cmd.Name())
 	}
 }
 
@@ -24,7 +28,7 @@ func TestSetCommand_AdminOnly(t *testing.T) {
 func TestSetCommand_MissingArgs(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
-		WithArgs("/set")
+		WithArgs("+set")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -40,7 +44,7 @@ func TestSetCommand_MissingArgs(t *testing.T) {
 func TestSetCommand_MissingValue(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
-		WithArgs("/set", "model")
+		WithArgs("+set", "model")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -56,7 +60,7 @@ func TestSetCommand_MissingValue(t *testing.T) {
 func TestSetCommand_UnknownKey(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
-		WithArgs("/set", "unknownkey", "somevalue")
+		WithArgs("+set", "unknownkey", "somevalue")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -74,7 +78,7 @@ func TestSetCommand_SetModel(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "model", "gpt-4")
+		WithArgs("+set", "model", "gpt-4")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -95,7 +99,7 @@ func TestSetCommand_SetPrompt(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "prompt", "You", "are", "helpful")
+		WithArgs("+set", "prompt", "You", "are", "helpful")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -115,7 +119,7 @@ func TestSetCommand_SetAddressed(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "addressed", "false")
+		WithArgs("+set", "addressed", "false")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -133,7 +137,7 @@ func TestSetCommand_InvalidBoolValue(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "addressed", "notabool")
+		WithArgs("+set", "addressed", "notabool")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -151,7 +155,7 @@ func TestSetCommand_SetMaxTokens(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "maxtokens", "2048")
+		WithArgs("+set", "maxtokens", "2048")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -169,7 +173,7 @@ func TestSetCommand_InvalidIntValue(t *testing.T) {
 	ctx := mocktest.NewMockContext().
 		WithAdmin(true).
 		WithSystem(mockSys).
-		WithArgs("/set", "maxtokens", "notanint")
+		WithArgs("+set", "maxtokens", "notanint")
 
 	cmd := &SetCommand{}
 	cmd.Execute(ctx)
@@ -198,7 +202,7 @@ func TestSetCommand_InvalidDuration(t *testing.T) {
 			ctx := mocktest.NewMockContext().
 				WithAdmin(true).
 				WithSystem(mockSys).
-				WithArgs("/set", "sessionduration", tt.value)
+				WithArgs("+set", "sessionduration", tt.value)
 
 			cmd := &SetCommand{}
 			cmd.Execute(ctx)
@@ -233,7 +237,7 @@ func TestSetCommand_TopPBounds(t *testing.T) {
 			ctx := mocktest.NewMockContext().
 				WithAdmin(true).
 				WithSystem(mockSys).
-				WithArgs("/set", "top_p", tt.value)
+				WithArgs("+set", "top_p", tt.value)
 
 			cmd := &SetCommand{}
 			cmd.Execute(ctx)
@@ -269,7 +273,7 @@ func TestSetCommand_ChunkMaxEdgeCases(t *testing.T) {
 			ctx := mocktest.NewMockContext().
 				WithAdmin(true).
 				WithSystem(mockSys).
-				WithArgs("/set", "chunkmax", tt.value)
+				WithArgs("+set", "chunkmax", tt.value)
 
 			cmd := &SetCommand{}
 			cmd.Execute(ctx)

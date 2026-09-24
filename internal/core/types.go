@@ -1,3 +1,6 @@
+// Copyright (C) 2023-2026 Alex Schlessinger and soulshack contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
 package core
 
 // ChannelInfo represents the state of an IRC-ish channel

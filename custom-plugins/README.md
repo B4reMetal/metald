@@ -1,8 +1,9 @@
 # Custom plugins
 
 Your own tools go here. Everything in this folder except this README is
-git-ignored, so site-specific tools never end up in the repo. In Docker the
-same role is played by the `/plugins` volume.
+git-ignored, so site-specific tools never end up in the repo. In Docker, put
+them in the `plugins/` folder of the mounted config folder; the image links
+`custom-plugins/` to it, so `config.yml` names them the same way in both.
 
 A plugin is any executable that answers two calls:
 
@@ -12,8 +13,8 @@ A plugin is any executable that answers two calls:
   missing `requires` entry stops the bot at startup.
 - `./tool.py --execute '<json args>'` runs it and prints the result.
 
-List it in `config.yml` under `tool:` as `custom-plugins/tool.py` (or
-`/plugins/tool.py` in Docker). Make it executable.
+List it in `config.yml` under `tool:` as `custom-plugins/tool.py`, in Docker
+too. Make it executable.
 
 The shared `metald_tools` package is on `PYTHONPATH` for every tool, so a
 custom plugin gets the same building blocks as the shipped ones:

@@ -14,3 +14,4 @@ soulshack
 __pycache__/
 *.pyc
 docs/images/
+custom-plugins/

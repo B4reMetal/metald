@@ -22,6 +22,7 @@ go test ./internal/llm -run TestReply -v
 go vet ./...
 python3 -m unittest discover -s plugins/tests   # plugin tests, no network
 ./build.sh                    # docker image metald:dev
+docker buildx build --platform linux/arm64 --load -t metald:arm64 .   # the other arch; CI builds both
 ```
 
 Before reporting a code change done: `gofmt -l .` is empty, `go vet ./...` is clean, the tests for touched packages pass with `-race -count=1`, the plugin tests pass if `plugins/` changed, and `go build` succeeds. Every Go package under `internal/` has tests except `bot` and `testing`. Add a `_test.go` next to any new file. Tests must not reach the network; anything that would dial a host points at `127.0.0.1:1` or a mock.
@@ -43,7 +44,8 @@ plugins/               shipped tools; each answers --schema and --execute '<json
 plugins/lib/metald_tools/  shared library for tools (on PYTHONPATH via --pluginlib)
 plugins/mcp/           MCP server definitions
 plugins/tests/         plugin unit tests (python3 -m unittest discover -s plugins/tests)
-custom-plugins/        site-specific tools, git-ignored except its README
+custom-plugins/        site-specific tools, git-ignored except its README (in Docker: /config/plugins)
+.github/workflows/docker.yml  publishes ghcr.io image (amd64+arm64) from main and weekly
 ```
 
 ## Rules that are not obvious from the code
@@ -61,6 +63,8 @@ custom-plugins/        site-specific tools, git-ignored except its README
 **Streaming output is filtered, not trusted.** `polly.go` runs a `ReasoningFilter` (strips `<think>` and split markers), a per-turn content budget (`maxTurnContent`) that latches and discards the rest of a runaway turn, and a bare-marker backstop in the IRC context. Reply text that reproduces the system prompt is blocked deterministically (`leaksSystemPrompt`, 8-word window) before any classifier runs.
 
 **Suspicion and quarantine.** Signals (`ToolRefused`, `ScreenDenied`, `InjectionFrames`, `MemoryRefused`, `ToolSyntax`, `Runaway`, `ReplyDenied`) feed a per-speaker score with 10-minute half-life. Crossing `SuspicionQuarantine` removes only that speaker's contiguous turns, including their tool messages, from context. Add a signal when you add a new refusal path.
+
+**The Docker image is read-only.** Image files are root-owned and the container runs with `--read-only`; the bot and every tool may write only under `/config` (state and logs in `/config/data`, via `METALD_DATADIR`, `TMPDIR`, `XDG_CACHE_HOME`, `HOME` and `METALD_TOOL_LOG`). A tool that needs to write somewhere must use one of those, never its own directory or `/tmp`. Check a change with `docker diff` after exercising it.
 
 **Config inheritance.** `networks:` is a list of `networkYAML` with pointer fields; unset fields inherit from the top-level `server:`. `Configuration.ForNetwork(s)` clones the config sharing `Bot`/`Model`/`API` and swaps `Server`. Add new per-network fields as pointers so inheritance keeps working.
 

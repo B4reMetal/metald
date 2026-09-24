@@ -29,25 +29,28 @@ cp examples/chatbot.yml config.yml     # then edit server, channel, model, tools
 
 ### Docker
 
-The image contains the binary, Python 3, curl, ffmpeg, yt-dlp and every shipped plugin, with the shared plugin library on `PYTHONPATH`. It reads `/config/config.yml`.
-
-| mount | contents |
-|---|---|
-| `/config` | `config.yml`: every setting, including tool secrets under `env:` |
-| `/plugins` | your own plugins, listed in `config.yml` as `/plugins/<name>` |
-| `/data` | runtime state: `memories.db`, `reminders.json`, `ignores.json`, `config-overrides.json` |
+Images for `linux/amd64` and `linux/arm64` are built from `main` and rebuilt weekly for base-image security fixes:
 
 ```bash
-docker build . -t metald:dev
-mkdir -p config plugins data
-docker run --rm --entrypoint cat metald:dev /app/examples/chatbot.yml > config/config.yml
-# edit config/config.yml
-docker run -d --name metald \
-  -v $(pwd)/config:/config -v $(pwd)/plugins:/plugins -v $(pwd)/data:/data \
-  metald:dev
+docker pull ghcr.io/b4remetal/metald:latest
 ```
 
-`examples/docker-compose.yml` does the same. Shipped plugins are referenced as `plugins/<name>` (the working directory is `/app`).
+They contain the binary, Python 3, curl, jq, ffmpeg, a current yt-dlp and every shipped plugin. The image itself is never written to: everything the container reads or writes lives in one folder mounted at `/config`, and the container can run with `--read-only`.
+
+| path | contents |
+|---|---|
+| `config.yml` | every setting, including tool secrets under `env:` |
+| `plugins/` | your own plugins, listed in `config.yml` as `custom-plugins/<name>`, the same name they have outside Docker |
+| `data/` | runtime state: the SQLite memory database, reminders, ignores, settings changed at runtime, the tools' error log (`tool-errors.log`), and temp and cache files |
+
+```bash
+mkdir config
+docker run --rm --read-only -v $(pwd)/config:/config ghcr.io/b4remetal/metald:latest
+# first start: writes config/config.yml from the example and stops; edit it, then
+docker run -d --name metald --read-only -v $(pwd)/config:/config ghcr.io/b4remetal/metald:latest
+```
+
+`examples/docker-compose.yml` does the same. The container runs as an unprivileged user, so the mounted folder must be writable by it; on Linux, `chown` the folder to the uid the error message names, or add `--user $(id -u)`. To build the image yourself: `docker build . -t metald`.
 
 ## Configuration
 
@@ -124,7 +127,7 @@ Set `model` to `provider/name`:
 ## Plugins
 
 -   **`plugins/`** ships with the code. None of the plugins is tied to one deployment; everything site-specific is a setting under `env:`. `plugins/lib/metald_tools` is a shared library they all use, and custom plugins can too: safety review, URL guard, ComfyUI client, chat and vision calls, hosting uploads, media metadata stripping, the lyricist and the image prompt refiner.
--   **`custom-plugins/`** is for your own. Everything in it except its README is git-ignored. In Docker, mount them at `/plugins`. See `custom-plugins/README.md` for the plugin contract.
+-   **`custom-plugins/`** is for your own. Everything in it except its README is git-ignored. In Docker, put them in the `plugins/` folder of the mounted config folder. See `custom-plugins/README.md` for the plugin contract.
 
 Plugins are optional; the bot starts with none. An enabled plugin must have every setting it declares as required, or the bot refuses to start and names the plugin and the setting:
 

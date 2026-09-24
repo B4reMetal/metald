@@ -3,7 +3,7 @@ services:
     image: metald:dev
     build: ..
     restart: unless-stopped
+    read_only: true          # the only writable place is the mount below
     volumes:
-      - ./config:/config      # config.yml (all settings, tool secrets under env:)
-      - ./plugins:/plugins    # your own tools, referenced as /plugins/<name>
-      - ./data:/data          # memories, reminders, ignores, runtime overrides
+      # config.yml, plugins/ for your own plugins, data/ for runtime state
+      - ./config:/config

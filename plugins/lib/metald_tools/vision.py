@@ -74,13 +74,7 @@ def view_image(source: str, question: str) -> str:
 
     return describe_image_bytes(image_bytes, mime, question)
 
-SAFETY_PROMPT = (
-    "You are a content safety filter. Look at this image. Does it depict "
-    "nudity, sexual content, graphic violence or gore, or anything illegal "
-    "(such as real depictions of self-harm or content sexualizing minors)? "
-    "Reply with exactly one word first, either SAFE or UNSAFE, then a very "
-    "short reason."
-)
+SAFETY_PROMPT = os.environ.get("IMAGE_SAFETY_PROMPT", "")
 
 def check_image_safety(image_bytes: bytes) -> tuple[bool, str]:
     """Runs the generated image through the vision model as a safety check
@@ -88,6 +82,8 @@ def check_image_safety(image_bytes: bytes) -> tuple[bool, str]:
     out (vision backend down, timeout, etc.), the image is treated as
     unsafe rather than uploaded unchecked.
     """
+    if not SAFETY_PROMPT.strip():
+        return False, "image safety check is not configured (set IMAGE_SAFETY_PROMPT)"
     verdict = describe_image_bytes(image_bytes, "image/png", SAFETY_PROMPT)
     if verdict.startswith("Error:"):
         return False, f"safety check itself failed: {verdict}"

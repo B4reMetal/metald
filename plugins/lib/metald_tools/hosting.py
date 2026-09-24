@@ -5,8 +5,8 @@
 
 Every media tool calls upload_file(). UPLOAD_BACKEND picks zipline (default),
 imgbb (images only) or http (any host, configured from the environment), and
-UPLOAD_HEADERS adds headers to every upload. examples/env.example lists every
-setting. A custom plugin can add a backend with register_backend().
+UPLOAD_HEADERS adds headers to every upload. The env: section of
+examples/chatbot.yml lists every setting. A custom plugin can add a backend with register_backend().
 """
 
 import os

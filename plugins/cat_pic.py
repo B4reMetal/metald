@@ -6,7 +6,7 @@
 """
 post_cat_picture tool for metald.
 
-Configure via environment variables (all optional, shared with vision.py):
+Configure under env: in config.yml (all optional):
   VISION_API_URL   base URL of an OpenAI-compatible API (default: http://localhost:8080/v1)
   VISION_MODEL     model name to send in the request (default: "local")
   VISION_API_KEY   bearer token, if needed

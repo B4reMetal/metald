@@ -38,5 +38,24 @@ class TestScoreNeverLeaks(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIsNone(re.search(r"\d", reason))
 
+class TestVerdictNeedsPreamble(unittest.TestCase):
+    def test_missing_preamble_fails_closed_without_a_request(self):
+        mode, pre = safetyreview.REVIEW_MODE, safetyreview.PREAMBLE
+        safetyreview.REVIEW_MODE, safetyreview.PREAMBLE = "verdict", ""
+        try:
+            self.assertEqual(safetyreview.review("p", "c"), (False, "safety check unavailable"))
+        finally:
+            safetyreview.REVIEW_MODE, safetyreview.PREAMBLE = mode, pre
+
+    def test_requires_preamble_only_in_verdict_mode(self):
+        mode = safetyreview.REVIEW_MODE
+        try:
+            safetyreview.REVIEW_MODE = "verdict"
+            self.assertEqual(safetyreview.requires(), ["SAFETY_REVIEW_PREAMBLE"])
+            safetyreview.REVIEW_MODE = "score"
+            self.assertEqual(safetyreview.requires(), [])
+        finally:
+            safetyreview.REVIEW_MODE = mode
+
 if __name__ == "__main__":
     unittest.main()

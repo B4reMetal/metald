@@ -85,7 +85,8 @@ type BotConfig struct {
 	// MaxConcurrent is how many requests may run at once, across all networks.
 	MaxConcurrent int
 	// PluginLib is put on PYTHONPATH so tools can import metald_tools.
-	PluginLib string
+	PluginLib     string
+	CommandPrefix string
 
 	// Every model-facing prompt is overridable; defaults live in prompts.go.
 	FloorPrompt        string
@@ -94,6 +95,7 @@ type BotConfig struct {
 	ClassifyPreamble   string
 	ReplyScreenPolicy  string
 	MemoryPolicy       string
+	MemoryFrame        string
 }
 
 type ModelConfig struct {
@@ -156,6 +158,16 @@ func GetFlags() []cli.Flag {
 				slog.Error("config_parse_failed", "path", configPath, "error", err.Error())
 				os.Exit(1)
 			}
+			vars, err := ToolEnv(configData["env"])
+			if err != nil {
+				slog.Error("config_env_invalid", "path", configPath, "error", err.Error())
+				os.Exit(1)
+			}
+			if len(vars) > 0 {
+				set, fromEnv := ExportToolEnv(vars)
+				slog.Info("tool_env_loaded", "from_config", len(set), "kept_from_environment", strings.Join(fromEnv, ","))
+			}
+			delete(configData, "env")
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: failed to read config file %s: %v\n", configPath, err)
 		}
@@ -225,6 +237,7 @@ func GetFlags() []cli.Flag {
 		// No defaults: the shipped text is in examples/chatbot.yml and the bot
 		// refuses to start if any of these is empty.
 		&cli.IntFlag{Name: "maxconcurrent", Value: 3, Usage: "requests handled at once across all networks (1 = strictly one at a time)", Sources: src("maxconcurrent", "METALD_MAXCONCURRENT")},
+		&cli.StringFlag{Name: "commandprefix", Value: "+", Usage: "what starts a command, e.g. + or ! (punctuation only)", Sources: src("commandprefix", "METALD_COMMANDPREFIX")},
 		&cli.StringFlag{Name: "pluginlib", Value: "plugins/lib", Usage: "shared Python library for tools, added to PYTHONPATH", Sources: src("pluginlib", "METALD_PLUGINLIB")},
 		&cli.StringFlag{Name: "datadir", Value: ".", Usage: "directory for runtime state (memories, reminders, ignores, overrides)", Sources: src("datadir", "METALD_DATADIR")},
 		&cli.StringFlag{Name: "floorprompt", Usage: "text prepended to a user-set +prompt persona when promptfloor is on (required)", Sources: src("floorprompt", "METALD_FLOORPROMPT")},
@@ -232,6 +245,7 @@ func GetFlags() []cli.Flag {
 		&cli.StringFlag{Name: "gatekeeperpolicy", Usage: "policy the inbound message classifier enforces for screened nicks (required)", Sources: src("gatekeeperpolicy", "METALD_GATEKEEPERPOLICY")},
 		&cli.StringFlag{Name: "classifypreamble", Usage: "system preamble shared by the tool and memory classifiers (required)", Sources: src("classifypreamble", "METALD_CLASSIFYPREAMBLE")},
 		&cli.StringFlag{Name: "replyscreenpolicy", Usage: "policy the outbound reply classifier enforces for filtered nicks (required)", Sources: src("replyscreenpolicy", "METALD_REPLYSCREENPOLICY")},
+		&cli.StringFlag{Name: "memoryframe", Usage: "text introducing what the bot remembers about the speaker; {nick} is replaced (required)", Sources: src("memoryframe", "METALD_MEMORYFRAME")},
 		&cli.StringFlag{Name: "memorypolicy", Usage: "policy checked before a fact is written to memory (required)", Sources: src("memorypolicy", "METALD_MEMORYPOLICY")},
 		&cli.DurationFlag{Name: "floodwindow", Value: 30 * time.Second, Usage: "sliding window for flood detection", Sources: src("floodwindow", "METALD_FLOODWINDOW")},
 		&cli.DurationFlag{Name: "floodtimeout", Value: 5 * time.Minute, Usage: "how long a flooding nick is auto-ignored", Sources: src("floodtimeout", "METALD_FLOODTIMEOUT")},
@@ -385,12 +399,14 @@ func NewConfiguration(c *cli.Command) *Configuration {
 			DataDir:            c.String("datadir"),
 			MaxConcurrent:      int(c.Int("maxconcurrent")),
 			PluginLib:          c.String("pluginlib"),
+			CommandPrefix:      c.String("commandprefix"),
 			FloorPrompt:        c.String("floorprompt"),
 			GatekeeperPreamble: c.String("gatekeeperpreamble"),
 			GatekeeperPolicy:   c.String("gatekeeperpolicy"),
 			ClassifyPreamble:   c.String("classifypreamble"),
 			ReplyScreenPolicy:  c.String("replyscreenpolicy"),
 			MemoryPolicy:       c.String("memorypolicy"),
+			MemoryFrame:        c.String("memoryframe"),
 			FloodWindow:        c.Duration("floodwindow"),
 			FloodTimeout:       c.Duration("floodtimeout"),
 		},

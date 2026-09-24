@@ -6,7 +6,7 @@
 """
 web_search tool for metald, backed by Exa (exa.ai).
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   EXA_API_KEY       required; the tool refuses to run without it
   EXA_MAX_RESULTS   hard ceiling on results per call (default: 5)
   EXA_MAX_CHARS     page text returned per result (default: 1200)

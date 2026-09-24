@@ -29,6 +29,9 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 	}
 	core.InitLogger(level, cfg.Bot.LogFormat)
 
+	if err := irc.ValidCommandPrefix(cfg.Bot.CommandPrefix); err != nil {
+		return fmt.Errorf("commandprefix %q: %w", cfg.Bot.CommandPrefix, err)
+	}
 	core.SetDataDir(cfg.Bot.DataDir)
 	commands.OverridesPath = core.DataPath("config-overrides.json")
 

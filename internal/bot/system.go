@@ -89,7 +89,7 @@ func NewSystem(c *config.Configuration) core.System {
 				}
 				if missing := core.MissingEnv(req, nil); len(missing) > 0 {
 					slog.Error("tool_requirements_missing", "tool", toolSpec,
-						"keys", strings.Join(missing, ", "), "hint", "set them in .env or remove the tool")
+						"keys", strings.Join(missing, ", "), "hint", "set them under env: in config.yml, or remove the tool")
 					unusable++
 					continue
 				}

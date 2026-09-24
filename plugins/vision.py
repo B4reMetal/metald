@@ -6,7 +6,7 @@
 """
 view_image tool for metald.
 
-Configure via environment variables (all optional):
+Configure under env: in config.yml (all optional):
   VISION_API_URL   OpenAI-compatible endpoint (default: http://localhost:8080/v1)
   VISION_MODEL     model name (default: "local")
   VISION_API_KEY   bearer token, if the endpoint needs one

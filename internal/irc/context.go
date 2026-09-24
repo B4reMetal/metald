@@ -74,18 +74,6 @@ func NewChatContext(parentctx context.Context, config *config.Configuration, sys
 		),
 	}
 
-	if ctx.IsAddressed() {
-		trigger := config.Bot.Trigger
-		if trigger == "" {
-			trigger = ircclient.GetNick()
-		}
-		// Only strip a genuine leading trigger; CheckAddressed also matches mid-message, and then
-		// args stay the full message.
-		if remainder, ok := StripLeadingTrigger(e.Last(), trigger); ok {
-			ctx.args = remainder
-		}
-	}
-
 	key := channel
 	if !girc.IsValidChannel(key) {
 		key = e.Source.Name
@@ -397,7 +385,7 @@ func (c ChatContext) IsPrivate() bool {
 }
 
 func (c ChatContext) GetCommand() string {
-	return strings.ToLower(c.args[0])
+	return CanonicalCommand(c.args[0], c.Config.Bot.CommandPrefix)
 }
 
 // generateRequestID creates a unique 8-character request ID for correlation

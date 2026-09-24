@@ -6,7 +6,7 @@
 """
 generate_image tool for metald.
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   COMFYUI_URL          base URL of the ComfyUI server (default: http://127.0.0.1:8188)
   IMAGE_GEN_UNET       diffusion model (default: qwen_image_2.1_int8_convrot.safetensors)
   IMAGE_GEN_CLIP       text encoder (default: qwen3vl_8b_int8_convrot.safetensors)
@@ -49,7 +49,7 @@ POLL_TIMEOUT = 540  # render is ~35-55s, but with concurrent requests it can que
 UPLOAD_TIMEOUT = 60  # imgbb can be slow on some images; was 30, too tight
 
 def requires() -> list:
-    return hosting.requires()
+    return ["IMAGE_SAFETY_PROMPT", "IMAGE_PROMPT_REFINER"] + hosting.requires()
 
 def print_schema():
     schema = {

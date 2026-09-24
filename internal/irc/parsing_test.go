@@ -5,7 +5,6 @@
 package irc
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -39,36 +38,6 @@ func TestCheckAddressed(t *testing.T) {
 			got := CheckAddressed(tt.message, tt.nick)
 			if got != tt.want {
 				t.Errorf("CheckAddressed(%q, %q) = %v, want %v", tt.message, tt.nick, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestStripLeadingTrigger(t *testing.T) {
-	tests := []struct {
-		name        string
-		message     string
-		trigger     string
-		wantRemain  []string
-		wantMatched bool
-	}{
-		{"leading single-word trigger with colon", "bot: /help", "bot", []string{"/help"}, true},
-		{"leading single-word trigger with space", "bot hello there", "bot", []string{"hello", "there"}, true},
-		{"leading single-word trigger with comma", "bot, hello", "bot", []string{"hello"}, true},
-		{"leading multi-word trigger", "hey bot set model gpt-5", "hey bot", []string{"set", "model", "gpt-5"}, true},
-		{"case insensitive, preserves remainder casing", "MetalAI /Help Me", "metalai", []string{"/Help", "Me"}, true},
-		{"trigger not leading - matched mid-message by CheckAddressed", "hey bot /help", "bot", nil, false},
-		{"trigger is the whole message", "bot", "bot", []string{}, true},
-		{"embedded prefix doesn't count", "botter hello", "bot", nil, false},
-		{"empty trigger", "bot: hello", "", nil, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotRemain, gotMatched := StripLeadingTrigger(tt.message, tt.trigger)
-			if gotMatched != tt.wantMatched || strings.Join(gotRemain, "|") != strings.Join(tt.wantRemain, "|") {
-				t.Errorf("StripLeadingTrigger(%q, %q) = (%v, %v), want (%v, %v)",
-					tt.message, tt.trigger, gotRemain, gotMatched, tt.wantRemain, tt.wantMatched)
 			}
 		})
 	}

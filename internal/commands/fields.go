@@ -6,6 +6,7 @@ package commands
 
 import (
 	"B4reMetal/metald/internal/core"
+	"B4reMetal/metald/internal/irc"
 	"fmt"
 	"strconv"
 	"strings"
@@ -180,6 +181,16 @@ var configFields = map[string]configField{
 			return nil
 		},
 		getter: func(c *config.Configuration) string { return fmt.Sprintf("%t", c.Bot.ShowToolActions) },
+	},
+	"commandprefix": {
+		setter: func(c *config.Configuration, v string) error {
+			if err := irc.ValidCommandPrefix(v); err != nil {
+				return err
+			}
+			c.Bot.CommandPrefix = v
+			return nil
+		},
+		getter: func(c *config.Configuration) string { return c.Bot.CommandPrefix },
 	},
 	"maxconcurrent": {
 		setter: func(c *config.Configuration, v string) error {

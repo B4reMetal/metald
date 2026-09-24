@@ -5,6 +5,8 @@
 package commands
 
 import (
+	"regexp"
+	"sort"
 	"strings"
 
 	"B4reMetal/metald/internal/irc"
@@ -98,7 +100,7 @@ func (r *Registry) Dispatch(ctx irc.ChatContextInterface) bool {
 		"source", ctx.GetSource(),
 	)
 
-	cmd.Execute(ctx)
+	cmd.Execute(r.withPrefix(ctx))
 	return true
 }
 
@@ -110,3 +112,36 @@ func (r *Registry) All() []Command {
 	}
 	return cmds
 }
+
+// prefixedReplies shows command names in replies with the configured prefix,
+// since commands spell themselves "+name" in their usage text.
+type prefixedReplies struct {
+	irc.ChatContextInterface
+	names *regexp.Regexp
+}
+
+func (r *Registry) withPrefix(ctx irc.ChatContextInterface) irc.ChatContextInterface {
+	prefix := ctx.GetConfig().Bot.CommandPrefix
+	if prefix == "" || prefix == "+" {
+		return ctx
+	}
+	var alts []string
+	for name := range r.commands {
+		if strings.HasPrefix(name, "+") {
+			alts = append(alts, regexp.QuoteMeta(name[1:]))
+		}
+	}
+	sort.Slice(alts, func(i, j int) bool { return len(alts[i]) > len(alts[j]) })
+	return prefixedReplies{ctx, regexp.MustCompile(`(^|[^\w+])\+(` + strings.Join(alts, "|") + `)\b`)}
+}
+
+func (p prefixedReplies) rewrite(s string) string {
+	prefix := p.GetConfig().Bot.CommandPrefix
+	return p.names.ReplaceAllStringFunc(s, func(m string) string {
+		i := strings.Index(m, "+")
+		return m[:i] + prefix + m[i+1:]
+	})
+}
+
+func (p prefixedReplies) Reply(s string)       { p.ChatContextInterface.Reply(p.rewrite(s)) }
+func (p prefixedReplies) ReplyAction(s string) { p.ChatContextInterface.ReplyAction(p.rewrite(s)) }

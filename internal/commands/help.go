@@ -33,7 +33,7 @@ func (c *HelpCommand) Execute(ctx irc.ChatContextInterface) {
 			continue
 		}
 		if name := cmd.Name(); name != "" {
-			names = append(names, name)
+			names = append(names, ctx.GetConfig().Bot.CommandPrefix+strings.TrimPrefix(name, "+"))
 		}
 	}
 

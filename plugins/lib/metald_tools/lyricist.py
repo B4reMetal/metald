@@ -7,9 +7,10 @@
 Lyricist sub-step for the song tool: a second model call that edits the main
 model's draft into finished, section-tagged lyrics.
 
-Configure via environment variables:
+Configure under env: in config.yml:
   LYRICIST          "off" skips the step and sings the draft as given
-  LYRICIST_PROMPT   system prompt (required; see examples/env.example)
+  LYRICIST_PROMPT   system prompt (required; default text in examples/chatbot.yml)
+  LYRICIST_FORMAT   rules appended to it; {min_seconds} {min_lines} {max_lines} {max_chars}
   LYRICIST_URL      OpenAI-compatible endpoint (default: SAFETY_REVIEW_URL)
   LYRICIST_MODEL    model name (default: "chat")
   LYRICIST_KEY      api key, if the endpoint needs one
@@ -31,6 +32,7 @@ KEY = os.environ.get("LYRICIST_KEY", os.environ.get("SAFETY_REVIEW_KEY", "not-ne
 TIMEOUT = int(os.environ.get("LYRICIST_TIMEOUT", "120"))
 REASONING = os.environ.get("LYRICIST_REASONING", "low")
 PROMPT = os.environ.get("LYRICIST_PROMPT", "")
+FORMAT = os.environ.get("LYRICIST_FORMAT", "")
 
 MAX_CHARS = 3000
 SECONDS_PER_LINE = 4.0
@@ -48,7 +50,7 @@ def enabled() -> bool:
     return os.environ.get("LYRICIST", "on").strip().lower() != "off"
 
 def configured() -> bool:
-    return bool(PROMPT.strip())
+    return bool(PROMPT.strip() and FORMAT.strip())
 
 def line_budget(seconds: float) -> int:
     return max(8, int(seconds / SECONDS_PER_LINE))
@@ -61,18 +63,12 @@ def sung_lines(text: str) -> int:
     return sum(1 for l in text.splitlines() if l.strip() and not _TAG.match(l))
 
 def format_rules(seconds: float) -> str:
-    lo = min(line_floor(), line_budget(seconds))
-    return (
-        f"FORMAT: output only the lyrics, nothing else - no title, no notes, no "
-        f"commentary, no quotes. Put each section header on its own line in "
-        f"square brackets: [Verse], [Chorus], [Bridge], [Outro]. The music "
-        f"model sizes the track to the words, so length matters: a full song "
-        f"here runs {int(MIN_SECONDS)} seconds or more, which means at least "
-        f"{lo} lines of lyrics - at least two verses, a chorus sung at least "
-        f"twice, and a bridge or outro. Write no more than "
-        f"{line_budget(seconds)} lines and never exceed {MAX_CHARS} characters. "
-        f"Do not make the draft shorter unless the notes ask for it."
-    )
+    """LYRICIST_FORMAT with {min_seconds}, {min_lines}, {max_lines} and {max_chars} filled in."""
+    try:
+        return FORMAT.format(min_seconds=int(MIN_SECONDS), min_lines=min(line_floor(), line_budget(seconds)),
+                             max_lines=line_budget(seconds), max_chars=MAX_CHARS)
+    except (KeyError, IndexError, ValueError) as e:
+        raise LyricistError(f"bad LYRICIST_FORMAT placeholder: {e}")
 
 def clean(text: str) -> str:
     text = _THINK.sub("", text)

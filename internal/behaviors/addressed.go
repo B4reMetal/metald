@@ -38,10 +38,9 @@ func (b *AddressedBehavior) Check(ctx irc.ChatContextInterface, event *girc.Even
 		return false
 	}
 
-	// A registered command ("+backend", "+tools", ...) is handled even when the message doesn't
-	// address the bot by name.
+	// A registered command is handled even when the message doesn't address the bot by name.
 	if fields := strings.Fields(event.Last()); len(fields) > 0 {
-		if _, isCommand := b.CmdRegistry.Get(strings.ToLower(fields[0])); isCommand {
+		if _, isCommand := b.CmdRegistry.Get(irc.CanonicalCommand(fields[0], ctx.GetConfig().Bot.CommandPrefix)); isCommand {
 			return true
 		}
 	}

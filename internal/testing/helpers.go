@@ -30,6 +30,7 @@ func DefaultTestConfig() *config.Configuration {
 			ShowThinkingAction: false,
 			ShowToolActions:    false,
 			PromptFloor:        true,
+			CommandPrefix:      "+",
 			// Non-empty so the mock passes the startup check; content is
 			// irrelevant to tests that don't assert on it.
 			FloorPrompt:        "test floor prompt\n\n",
@@ -38,6 +39,7 @@ func DefaultTestConfig() *config.Configuration {
 			ClassifyPreamble:   "test classify preamble",
 			ReplyScreenPolicy:  "test reply screen policy",
 			MemoryPolicy:       "test memory policy",
+			MemoryFrame:        "things you already know about {nick}:",
 		},
 		Model: &config.ModelConfig{
 			Model:          "test/model",

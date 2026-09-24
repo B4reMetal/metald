@@ -14,6 +14,7 @@ var PromptKeys = []string{
 	"classifypreamble",
 	"replyscreenpolicy",
 	"memorypolicy",
+	"memoryframe",
 }
 
 // MissingPrompts returns the prompt keys that are empty or whitespace.
@@ -28,6 +29,7 @@ func MissingPrompts(b *BotConfig) []string {
 		"classifypreamble":   b.ClassifyPreamble,
 		"replyscreenpolicy":  b.ReplyScreenPolicy,
 		"memorypolicy":       b.MemoryPolicy,
+		"memoryframe":        b.MemoryFrame,
 	}
 	var missing []string
 	for _, k := range PromptKeys {

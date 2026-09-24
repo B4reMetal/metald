@@ -6,7 +6,7 @@
 """
 fetch tool for metald, backed by Exa (exa.ai) /contents.
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   EXA_API_KEY       required
   EXA_FETCH_CHARS   characters of page text returned (default: 3000)
 """

@@ -6,7 +6,7 @@
 """
 wikipedia tool for metald.
 
-Configure via environment variables (both optional):
+Configure under env: in config.yml (both optional):
   WIKI_LANG        language edition (default: en)
   WIKI_MAX_CHARS   characters of summary returned (default: 1200)
 """

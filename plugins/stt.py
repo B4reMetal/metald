@@ -6,7 +6,7 @@
 """
 transcribe tool for metald.
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   WHISPER_URL        whisper.cpp server (default: http://127.0.0.1:8083)
   STT_MAX_SECONDS    longest audio accepted (default: 600 = 10 minutes)
   STT_MAX_BYTES      largest download accepted (default: 200 MB)

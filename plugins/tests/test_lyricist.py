@@ -11,6 +11,9 @@ os.environ.setdefault("METALD_TOOL_LOG", os.devnull)
 _plugins = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [_plugins, os.path.join(_plugins, "lib")]
 from metald_tools import lyricist
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shipped import shipped
+lyricist.FORMAT = shipped("LYRICIST_FORMAT")
 
 class TestClean(unittest.TestCase):
     def test_strips_think_and_fences(self):
@@ -33,6 +36,24 @@ class TestClean(unittest.TestCase):
         out = lyricist.clean(text)
         self.assertLessEqual(len(out), lyricist.MAX_CHARS)
         self.assertFalse(out.endswith("of the s"))
+
+class TestFormatSetting(unittest.TestCase):
+    def test_bad_placeholder_is_a_lyricist_error(self):
+        old = lyricist.FORMAT
+        lyricist.FORMAT = "write {nonsense} lines"
+        try:
+            with self.assertRaises(lyricist.LyricistError):
+                lyricist.format_rules(120)
+        finally:
+            lyricist.FORMAT = old
+
+    def test_missing_format_means_not_configured(self):
+        old = lyricist.FORMAT, lyricist.PROMPT
+        lyricist.FORMAT, lyricist.PROMPT = "", "p"
+        try:
+            self.assertFalse(lyricist.configured())
+        finally:
+            lyricist.FORMAT, lyricist.PROMPT = old
 
 class TestBudget(unittest.TestCase):
     def test_line_budget_scales_with_length(self):

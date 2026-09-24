@@ -53,7 +53,19 @@ class ChatTest(unittest.TestCase):
         self.reply = (500, b"boom")
         self.assertTrue(vision.describe_image_bytes(b"img", "image/png", "what").startswith("Error:"))
 
+    def test_image_safety_check_refuses_without_a_prompt(self):
+        old = vision.SAFETY_PROMPT
+        vision.SAFETY_PROMPT = ""
+        try:
+            ok, reason = vision.check_image_safety(b"img")
+            self.assertFalse(ok)
+            self.assertIn("IMAGE_SAFETY_PROMPT", reason)
+            self.assertEqual(self.srv.seen, [], "no request without a prompt")
+        finally:
+            vision.SAFETY_PROMPT = old
+
     def test_image_safety_check_fails_closed(self):
+        vision.SAFETY_PROMPT = "is it safe?"
         vision.DEFAULT_API_URL = "http://127.0.0.1:1/v1"
         ok, _ = vision.check_image_safety(b"img")
         self.assertFalse(ok)

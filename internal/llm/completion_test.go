@@ -130,7 +130,7 @@ func TestComplete_NoLeakedGoroutines(t *testing.T) {
 // A system message anywhere but index 0 is rejected by the backend's chat template ("System message
 // must be at the beginning") with a 400.
 func TestMemoryInjectionKeepsSystemMessageFirst(t *testing.T) {
-	const mem = "things you already know about greg:\n  - likes fish"
+	const mem = "things you already know about carol:\n  - likes fish"
 
 	inject := func(in []messages.ChatMessage) []messages.ChatMessage {
 		if len(in) > 0 && in[0].Role == messages.MessageRoleSystem {

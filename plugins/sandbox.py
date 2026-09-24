@@ -6,7 +6,7 @@
 """
 run_code tool for metald.
 
-Configure via environment variables:
+Configure under env: in config.yml:
   FLY_API_TOKEN            required; app-scoped token from "fly tokens create"
   FLY_SANDBOX_APP          Fly app that owns the machines (default: metald-sandbox)
   FLY_SANDBOX_REGION       where to boot them (default: dfw)
@@ -93,7 +93,7 @@ def print_schema():
         "required": ["code"],
         "additionalProperties": False,
         "sandbox": False,
-        "requires": ["FLY_API_TOKEN"],
+        "requires": ["FLY_API_TOKEN", "SANDBOX_SAFETY_POLICY"] + safetyreview.requires("SANDBOX_REVIEW"),
     }
     print(json.dumps(schema, indent=2))
 
@@ -234,26 +234,7 @@ def spawns_process(code: str) -> bool:
     lowered = code.lower()
     return any(pattern in lowered for pattern in PROCESS_PATTERNS)
 
-REVIEW_POLICY = """\
-The action is executing a code snippet inside a disposable cloud sandbox \
-(1 CPU, 2GB RAM, no network, wiped afterwards).
-
-DENY if the code would:
-- reach the network in any way (sockets, http, dns, ping, curl/wget, /dev/tcp)
-- exhaust resources: fork bombs, unbounded loops spawning work, runaway \
-allocation, filling the disk, crypto mining, deliberate CPU burning
-- read or print the environment, credentials, tokens, cloud metadata, or \
-container/infrastructure identifiers
-- inspect or probe the sandbox, host, processes, or filesystem beyond what a \
-computation needs
-- build or decode code to execute at runtime (exec/eval of assembled strings)
-- attempt to persist, escape, or affect anything outside its own process
-
-ALLOW ordinary computation: arithmetic, algorithms, text and data processing, \
-parsing, simulations, printing results, standard-library use with bounded work.
-
-Bounded is the test, not clever. A loop with a fixed, reasonable iteration \
-count is fine; one whose size is unbounded or absurd is not."""
+REVIEW_POLICY = os.environ.get("SANDBOX_SAFETY_POLICY", "")
 
 REVIEW_REFUSAL = (
     "Error: refused - a safety check rejected this code before it ran ({reason}). "
@@ -343,6 +324,9 @@ def main():
         return
 
     if option == "--execute":
+        if not REVIEW_POLICY.strip():
+            print("Error: sandbox safety policy is not configured (set SANDBOX_SAFETY_POLICY)")
+            return
         if len(sys.argv) < 3:
             print("Error: Missing JSON input for execution")
             sys.exit(1)

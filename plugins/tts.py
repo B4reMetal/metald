@@ -6,7 +6,7 @@
 """
 speak tool for metald.
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   COMFYUI_URL          ComfyUI server (default: http://127.0.0.1:8188)
   TTS_VOICES         extra voices, name=clip.wav,... (clips in ComfyUI's input/)
   TTS_MAX_CHARS      longest text accepted (default: 800)

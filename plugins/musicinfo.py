@@ -6,7 +6,7 @@
 """
 musicinfo tool for metald.
 
-Configure via environment variables (optional):
+Configure under env: in config.yml (optional):
   MUSICINFO_MAX_RESULTS   results per lookup (default: 5)
 """
 

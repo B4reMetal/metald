@@ -25,4 +25,4 @@ from metald_tools.media import strip_audio_metadata, strip_mp4_metadata
 from metald_tools.promptrefine import refine_prompt
 ```
 
-Keep secrets in `.env` (or `/config/.env` in Docker), never in the plugin.
+Put its settings and secrets under `env:` in `config.yml`, never in the plugin; the bot passes them to every tool as environment variables.

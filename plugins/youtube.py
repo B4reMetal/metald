@@ -6,7 +6,7 @@
 """
 youtube tool for metald.
 
-Configure via environment variables (optional):
+Configure under env: in config.yml (optional):
   YT_MAX_CHARS      transcript characters returned (default: 3000)
   YT_MAX_DURATION   longest video accepted, seconds (default: 7200)
 """

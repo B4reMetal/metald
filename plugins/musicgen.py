@@ -6,7 +6,7 @@
 """
 generate_music tool for metald.
 
-Configure via environment variables (see .env at the repo root):
+Configure under env: in config.yml:
   COMFYUI_URL          base URL of the ComfyUI server (default: http://127.0.0.1:8188)
   MUSIC_GEN_CKPT       YuE2 checkpoint (default: yue2_3b_bf16.safetensors)
   MUSIC_GEN_STEPS      sampler steps (default: 32)
@@ -50,9 +50,9 @@ UPLOAD_TIMEOUT = 90
 SAFETY_POLICY = os.environ.get("MUSIC_SAFETY_POLICY", "")
 
 def requires() -> list:
-    req = ["MUSIC_SAFETY_POLICY"] + hosting.requires()
+    req = ["MUSIC_SAFETY_POLICY"] + hosting.requires() + safetyreview.requires("MUSIC_SAFETY_REVIEW")
     if lyricist.enabled():
-        req.append("LYRICIST_PROMPT")
+        req += ["LYRICIST_PROMPT", "LYRICIST_FORMAT"]
     return req
 
 def print_schema():

@@ -23,7 +23,7 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod 0755 /usr/local/bin/entrypoint && mkdir -p /config /plugins /data \
     && chown metald:metald /config /plugins /data
 
-# /config  config.yml and .env (credentials for enabled tools)
+# /config  config.yml: every setting, including tool settings and secrets under env:
 # /plugins your own tools: any executable that answers --schema / --execute;
 #          shipped tools live in /app/plugins, their shared library on PYTHONPATH
 # /data    memories.db, reminders.json, ignores.json, config-overrides.json

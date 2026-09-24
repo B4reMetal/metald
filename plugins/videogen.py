@@ -5,7 +5,7 @@
 """
 generate_video tool for metald: LTX-2.5 via ComfyUI, video with its own audio.
 
-Configure via environment variables:
+Configure under env: in config.yml:
   COMFYUI_URL          ComfyUI server (default: http://127.0.0.1:8188)
   VIDEO_SAFETY_POLICY  review policy for the prompt (required)
   VIDEO_SAFETY_REVIEW  "off" disables the review
@@ -45,12 +45,12 @@ TEXT_ENCODER = "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
 VIDEO_VAE = "ltx-2.5-video-vae-bf16.safetensors"
 AUDIO_VAE = "ltx-2.5-audio-vae-bf16.safetensors"
 UPSCALER = "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
-NEGATIVE = "pc game, console game, video game, cartoon, childish, ugly, watermark, text"
+NEGATIVE = os.environ.get("VIDEO_NEGATIVE_PROMPT", "")
 
 SIZES = {"landscape": (1280, 720), "portrait": (720, 1280), "square": (960, 960)}
 
 def requires() -> list:
-    return ["VIDEO_SAFETY_POLICY"] + hosting.requires()
+    return ["VIDEO_SAFETY_POLICY", "VIDEO_NEGATIVE_PROMPT"] + hosting.requires() + safetyreview.requires("VIDEO_SAFETY_REVIEW")
 
 def print_schema():
     schema = {

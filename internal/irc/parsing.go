@@ -18,39 +18,6 @@ func isTriggerWordChar(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
-// StripLeadingTrigger removes trigger from the very start of message, if it appears there as a
-// bounded whole word/phrase, and returns the remaining whitespace-tokenized words.
-func StripLeadingTrigger(message, trigger string) ([]string, bool) {
-	fields := strings.Fields(message)
-	trigWords := strings.Fields(trigger)
-	if len(trigWords) == 0 || len(fields) < len(trigWords) {
-		return nil, false
-	}
-
-	for i, w := range trigWords[:len(trigWords)-1] {
-		if !strings.EqualFold(fields[i], w) {
-			return nil, false
-		}
-	}
-
-	last := fields[len(trigWords)-1]
-	wantLast := trigWords[len(trigWords)-1]
-	switch {
-	case strings.EqualFold(last, wantLast):
-		// exact match: trigger word is its own token
-	case len(last) == len(wantLast)+1 && strings.EqualFold(last[:len(wantLast)], wantLast):
-		// exactly one trailing separator glued on, e.g. "bot:" or "bot,"
-		sep := last[len(wantLast)]
-		if sep != ':' && sep != ',' {
-			return nil, false
-		}
-	default:
-		return nil, false
-	}
-
-	return fields[len(trigWords):], true
-}
-
 // CheckAddressed reports whether trigger appears anywhere in message as a whole word or
 // phrase, case-insensitively.
 func CheckAddressed(message, trigger string) bool {

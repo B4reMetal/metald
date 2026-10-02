@@ -1,0 +1,23 @@
+# The station's public side (edge.liq), next to Icecast and the web server. Settings in .env (mode 600):
+#   HARBOR_BIND           address home connects to (the WireGuard one, e.g. 10.0.0.1), port 8005
+#   HARBOR_PASSWORD       what home sends with (station.liq's EDGE_PASSWORD)
+#   HLS_DIR               where the web server serves the HLS files from (writable by uid 100)
+#   ICECAST_HOST/_PORT, ICECAST_SOURCE_PASSWORD, ICECAST_MOUNT (jpop), STATION_NAME
+services:
+  edge:
+    image: savonet/liquidsoap:v2.3.3
+    restart: unless-stopped
+    # Host networking: the harbor binds the WireGuard address and Icecast is on loopback.
+    network_mode: host
+    command: ["/station/edge.liq"]
+    environment:
+      HARBOR_BIND: ${HARBOR_BIND:?}
+      HARBOR_PASSWORD: ${HARBOR_PASSWORD:?}
+      ICECAST_HOST: ${ICECAST_HOST:-127.0.0.1}
+      ICECAST_PORT: ${ICECAST_PORT:-8100}
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?}
+      ICECAST_MOUNT: ${ICECAST_MOUNT:-jpop}
+      STATION_NAME: ${STATION_NAME:-station}
+    volumes:
+      - ./edge.liq:/station/edge.liq:ro
+      - ${HLS_DIR:?}:/hls

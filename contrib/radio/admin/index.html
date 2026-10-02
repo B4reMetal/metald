@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio Admin</title>
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<style>
+  :root { --bg:#faf8f5; --fg:#1d1b19; --muted:#6f6a64; --card:#fff; --line:#e6e1da; --accent:#c2410c; --bad:#b91c1c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141312; --fg:#ece8e3; --muted:#9c958d; --card:#1d1c1a; --line:#2e2c29; --accent:#fb923c; --bad:#f87171; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:28px 16px 64px; }
+  .logo { width:28px; height:28px; vertical-align:-9px; margin-right:8px; }
+  h1 { font-size:14px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 18px; }
+  h1 a { color:inherit; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:18px; }
+  .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .grow { flex:1; min-width:0; }
+  .title { font-weight:600; overflow-wrap:anywhere; }
+  .sub { color:var(--muted); font-size:13px; }
+  button { font:inherit; font-size:13px; color:var(--fg); background:transparent; border:1px solid var(--line);
+    border-radius:7px; padding:4px 10px; cursor:pointer; white-space:nowrap; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--card); font-weight:600; }
+  button:disabled { opacity:.4; cursor:default; }
+  input { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:7px;
+    padding:6px 10px; width:100%; }
+  ol, ul { list-style:none; margin:0; padding:0; }
+  li { padding:8px 0; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  .badge { white-space:nowrap; display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:999px; padding:0 7px; color:var(--muted); margin-left:6px; }
+  .empty { color:var(--muted); }
+  #status { min-height:20px; font-size:13px; color:var(--muted); margin:-8px 0 12px; }
+  #status.bad { color:var(--bad); }
+  .stack { display:flex; flex-direction:column; gap:8px; }
+  #newkey { font:13px/1.4 ui-monospace, monospace; background:var(--bg); border:1px dashed var(--accent);
+    border-radius:8px; padding:10px; overflow-wrap:anywhere; }
+  .revoked .title { text-decoration:line-through; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1><img class="logo" src="../favicon.svg" alt="">Radio admin · <a href="/">listen</a></h1>
+  <div id="status"></div>
+
+  <div class="card">
+    <div class="label">Now playing</div>
+    <div class="row">
+      <div class="grow"><div class="title" id="now">…</div><div class="sub" id="nowsub"></div></div>
+      <button id="skip">Skip</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Up next</div>
+    <ol id="queue"></ol>
+    <div id="queue-empty" class="empty">Nothing queued.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Queue a link</div>
+    <div class="stack">
+      <input id="url" placeholder="https://files.example.com/u/….flac" autocomplete="off">
+      <div class="row"><input id="urltitle" placeholder="Title (optional)" autocomplete="off">
+        <button class="primary" id="queueurl">Queue</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">API keys</div>
+    <div class="stack">
+      <div class="row"><input id="keyname" placeholder="Who is this key for?" autocomplete="off" maxlength="40">
+        <button class="primary" id="makekey">Create key</button></div>
+      <div id="newkey" hidden></div>
+      <ul id="keys"></ul>
+      <div class="sub">Key holders queue with <code>POST /api/request</code>, header
+        <code>Authorization: Bearer &lt;key&gt;</code>, body <code>{"url": "…", "title": "…", "lyrics": "…"}</code>
+        (title and lyrics optional; songs without lyrics get them transcribed).</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <div class="label grow" style="margin:0">Library <span id="count"></span></div>
+      <label class="sub" style="white-space:nowrap"><input id="showdj" type="checkbox" style="width:auto"> DJ intros</label>
+      <div style="width:40%"><input id="search" placeholder="Search titles" autocomplete="off"></div>
+    </div>
+    <ul id="library"></ul>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let tracks = [];
+
+function status(text, bad) {
+  $("status").textContent = text || "";
+  $("status").classList.toggle("bad", !!bad);
+}
+
+async function get(path) {
+  const r = await fetch("api/" + path, {cache: "no-store"});
+  if (!r.ok) throw new Error(path + ": " + r.status);
+  return r.json();
+}
+
+async function post(path, body) {
+  const r = await fetch("api/" + path, {method: "POST", headers: {"Content-Type": "application/json"},
+                                         body: JSON.stringify(body || {})});
+  let out = {};
+  try { out = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(out.error || out.result || (r.status === 403 ? "not allowed from this address" : "failed (" + r.status + ")"));
+  return out;
+}
+
+async function act(fn, done) {
+  try { await fn(); if (done) status(done); await refresh(); }
+  catch (e) { status(e.message, true); }
+}
+
+const clock = s => s == null ? "" : Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+function ago(t) {
+  const m = Math.round((Date.now() / 1000 - t) / 60);
+  return m < 60 ? m + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : Math.round(m / 1440) + "d ago";
+}
+
+function button(text, onclick, opts = {}) {
+  const b = Object.assign(document.createElement("button"), {textContent: text, onclick});
+  if (opts.primary) b.className = "primary";
+  if (opts.title) b.title = opts.title;
+  if (opts.disabled) b.disabled = true;
+  return b;
+}
+
+function renderQueue(q) {
+  const titles = q.queue || [];
+  $("queue").replaceChildren(...titles.map((t, i) => {
+    const li = document.createElement("li");
+    li.className = "row";
+    const name = Object.assign(document.createElement("div"), {className: "grow title", textContent: (i + 1) + ". " + t});
+    li.append(name,
+      button("↑", () => act(() => post("swap", {a: i, b: i - 1})), {title: "Move up", disabled: i === 0}),
+      button("↓", () => act(() => post("swap", {a: i, b: i + 1})), {title: "Move down", disabled: i === titles.length - 1}),
+      button("✕", () => act(() => post("remove", {position: i}), "removed " + t), {title: "Remove"}));
+    return li;
+  }));
+  $("queue-empty").hidden = titles.length > 0;
+}
+
+function renderLibrary() {
+  const term = $("search").value.trim().toLowerCase();
+  const isDj = t => t.dj || /\(dj\)$/.test(t.title);
+  const shown = tracks.filter(t => ($("showdj").checked || !isDj(t)) && (!term || t.title.toLowerCase().includes(term)));
+  $("count").textContent = "· " + (term ? shown.length + " of " : "") + tracks.length;
+  $("library").replaceChildren(...shown.map(t => {
+    const li = document.createElement("li");
+    li.className = "row";
+    const info = document.createElement("div");
+    info.className = "grow";
+    const title = Object.assign(document.createElement("div"), {className: "title", textContent: t.title});
+    if (isDj(t)) title.append(Object.assign(document.createElement("span"), {className: "badge", textContent: "dj"}));
+    if (t.timed) title.append(Object.assign(document.createElement("span"), {className: "badge", textContent: "read-along"}));
+    else if (t.lyrics) title.append(Object.assign(document.createElement("span"), {className: "badge", textContent: "lyrics"}));
+    const sub = Object.assign(document.createElement("div"), {className: "sub",
+      textContent: [clock(t.seconds), "queued " + ago(t.queued_at)].filter(Boolean).join(" · ")});
+    info.append(title, sub);
+    li.append(info, button("Queue", () => act(() => post("push", {file: t.file}), "queued " + t.title), {primary: true}));
+    return li;
+  }));
+}
+
+function renderKeys(keys) {
+  $("keys").replaceChildren(...keys.map(k => {
+    const li = document.createElement("li");
+    li.className = "row" + (k.revoked ? " revoked" : "");
+    const info = Object.assign(document.createElement("div"), {className: "grow"});
+    info.append(Object.assign(document.createElement("div"), {className: "title", textContent: k.name}),
+      Object.assign(document.createElement("div"), {className: "sub", textContent: [
+        "created " + ago(k.created),
+        k.last_used ? "last used " + ago(k.last_used) : "never used",
+        k.uses + " queued" + (k.today ? " (" + k.today + " today)" : ""),
+        k.revoked ? "revoked " + ago(k.revoked) : ""].filter(Boolean).join(" · ")}));
+    li.append(info, k.revoked ? "" : button("Revoke", () => {
+      if (confirm("Revoke the key for " + k.name + "? Anything using it stops working.")) {
+        act(() => post("keys/revoke", {id: k.id}), "revoked " + k.name).then(loadKeys);
+      }
+    }));
+    return li;
+  }));
+}
+
+async function loadKeys() {
+  try { renderKeys((await get("keys")).keys || []); }
+  catch (e) { status("can't load the keys: " + e.message, true); }
+}
+
+$("makekey").onclick = () => act(async () => {
+  const name = $("keyname").value.trim();
+  if (!name) throw new Error("name the key first");
+  const out = await post("keys", {name});
+  $("keyname").value = "";
+  const box = $("newkey");
+  box.replaceChildren(
+    Object.assign(document.createElement("div"), {textContent: "Key for " + out.name + " (shown once; copy it now):"}),
+    Object.assign(document.createElement("div"), {textContent: out.key, style: "margin:6px 0"}),
+    button("Copy", e => navigator.clipboard.writeText(out.key).then(() => { e.target.textContent = "Copied"; })),
+    " ", button("Done", () => { box.hidden = true; box.replaceChildren(); }));
+  box.hidden = false;
+  await loadKeys();
+  status("created a key for " + out.name);
+});
+
+async function refresh() {
+  try {
+    const [now, q] = await Promise.all([get("now"), get("queue")]);
+    $("now").textContent = now.title || "Nothing playing";
+    $("nowsub").textContent = [now.by ? "queued by " + now.by : "", now.listeners != null ? now.listeners + " listening" : ""]
+      .filter(Boolean).join(" · ");
+    $("skip").disabled = !now.title;
+    renderQueue(q);
+  } catch (e) { status("can't reach the radio: " + e.message, true); }
+}
+
+async function loadLibrary() {
+  try { tracks = (await get("library")).tracks || []; renderLibrary(); }
+  catch (e) { status("can't load the library: " + e.message, true); }
+}
+
+$("skip").onclick = () => act(() => post("skip"), "skipped");
+$("queueurl").onclick = () => act(async () => {
+  const url = $("url").value.trim();
+  if (!url) throw new Error("paste a link first");
+  const out = await post("push", {url, title: $("urltitle").value.trim()});
+  $("url").value = $("urltitle").value = "";
+  await loadLibrary();
+  status("queued " + out.queued);
+});
+$("search").oninput = renderLibrary;
+$("showdj").onchange = renderLibrary;
+
+refresh(); loadLibrary(); loadKeys();
+setInterval(refresh, 5000); setInterval(loadLibrary, 30000);
+</script>
+</body>
+</html>

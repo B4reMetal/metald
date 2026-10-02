@@ -1,0 +1,57 @@
+# Web radio: Liquidsoap plays a queue into Icecast (silent when it is empty); api.py lets the bot
+# queue tracks and serves now-playing. Only 127.0.0.1 ports are published; put a reverse proxy in front.
+services:
+  icecast:
+    image: libretime/icecast:2.4.4
+    restart: unless-stopped
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?}
+      ICECAST_RELAY_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?}
+      ICECAST_MAX_CLIENTS: ${ICECAST_MAX_CLIENTS:-100}
+    ports:
+      - "127.0.0.1:${ICECAST_PORT:-8100}:8000"
+
+  liquidsoap:
+    image: savonet/liquidsoap:v2.3.3
+    restart: unless-stopped
+    depends_on: [icecast]
+    command: ["/radio/radio.liq"]
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?}
+      RADIO_NAME: ${RADIO_NAME:-radio}
+    volumes:
+      - ./radio.liq:/radio/radio.liq:ro
+      - ./library:/library:ro
+      # HLS for the listening page; the proxy serves it at /hls/ (writable by the container's uid 100)
+      - ./hls:/hls
+
+  api:
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    restart: unless-stopped
+    depends_on: [liquidsoap]
+    command: ["python3", "-u", "/radio/api.py"]
+    environment:
+      RADIO_TOKEN: ${RADIO_TOKEN:?}
+      RADIO_SOURCE_PREFIX: ${RADIO_SOURCE_PREFIX:?}
+      RADIO_QUEUE_MAX: ${RADIO_QUEUE_MAX:-15}
+      RADIO_LIBRARY_MAX: ${RADIO_LIBRARY_MAX:-300}
+      RADIO_RETENTION_DAYS: ${RADIO_RETENTION_DAYS:-7}
+      RADIO_LIBRARY_MAX_MB: ${RADIO_LIBRARY_MAX_MB:-5000}
+      RADIO_KEY_WAITING_MAX: ${RADIO_KEY_WAITING_MAX:-3}
+      RADIO_KEY_DAILY_MAX: ${RADIO_KEY_DAILY_MAX:-20}
+      RADIO_FETCH_MAX_MB: ${RADIO_FETCH_MAX_MB:-100}
+      RADIO_REQUEST_ALLOW: ${RADIO_REQUEST_ALLOW:-}
+      RADIO_LYRICS_WAIT: ${RADIO_LYRICS_WAIT:-120}
+      RADIO_DJ_MAX_MB: ${RADIO_DJ_MAX_MB:-10}
+      RADIO_DJ_LUFS: ${RADIO_DJ_LUFS:--14}
+    volumes:
+      - ./api.py:/radio/api.py:ro
+      - ./library:/library
+      - ./meta:/meta
+      - ./keys:/keys
+      - ${RADIO_UPLOADS:?}:/uploads:ro
+    ports:
+      - "127.0.0.1:${RADIO_API_PORT:-8101}:8080"

@@ -1,0 +1,57 @@
+/* Colours come from the theme (lib/themes.ts) as CSS variables; these are Ember's, for the first paint. */
+:root {
+  --bg: #faf8f5; --fg: #1d1b19; --muted: #6f6a64; --dim: #a8a29b; --card: #fff; --line: #e6e1da;
+  --accent: #c2410c; --accent2: #eab308;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #141312; --fg: #ece8e3; --muted: #9c958d; --dim: #5e5953; --card: #1d1c1a; --line: #2e2c29; --accent: #fb923c; --accent2: #facc15; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+button { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+input { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+a { color: var(--accent); }
+.label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.empty { color: var(--muted); }
+.sub { color: var(--muted); font-size: 13px; }
+
+/* Winamp (themes.ts): Winamp 2's classic skin. Bevelled grey controls on a dark case, a black display with
+   glowing green type, and the playlist editor's green-on-black for the lyrics, the playing line in white. */
+:root[data-look="winamp"] {
+  --bevel-hi: #6e6e8c; --bevel-lo: #0e0e16; --case: #33334a;
+  --lcd: 0 0 4px rgb(0 224 0 / .55);
+}
+:root[data-look="winamp"] body { font-family: Tahoma, Verdana, system-ui, sans-serif;
+  background: repeating-linear-gradient(0deg, #1c1c26 0 2px, #20202c 2px 4px); }
+:root[data-look="winamp"] header { background: linear-gradient(#3c3c56, #26263a); padding: 6px 10px;
+  border: 1px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi); }
+:root[data-look="winamp"] .card { border-radius: 0; background: #000; border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  box-shadow: 0 0 0 6px var(--case), 0 0 0 7px var(--bevel-hi); margin: 7px; }
+:root[data-look="winamp"] .card h1 { font-family: "Courier New", ui-monospace, monospace; font-weight: 700;
+  color: var(--accent); text-shadow: var(--lcd); letter-spacing: .02em; }
+:root[data-look="winamp"] .times { font-family: "Courier New", ui-monospace, monospace; font-size: 13px;
+  color: var(--accent); text-shadow: var(--lcd); }
+:root[data-look="winamp"] .label { letter-spacing: .14em; font-size: 11px; }
+:root[data-look="winamp"] button, :root[data-look="winamp"] .play {
+  border-radius: 0; color: #d8d8ea; background: linear-gradient(#5c5c78, #383850);
+  border: 1px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi); }
+:root[data-look="winamp"] button:active, :root[data-look="winamp"] .play:active {
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); background: linear-gradient(#383850, #5c5c78); }
+:root[data-look="winamp"] .play { color: var(--accent); text-shadow: var(--lcd); letter-spacing: .1em; text-transform: uppercase; }
+:root[data-look="winamp"] .progress { height: 7px; border-radius: 0; background: #0a0a10; border: 1px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
+:root[data-look="winamp"] .progress div { background: linear-gradient(#58f058, #00a000); }
+:root[data-look="winamp"] .stage { border-radius: 0; background: #000;
+  border: 1px solid; border-color: var(--bevel-lo) #2a2a3a #2a2a3a var(--bevel-lo); }
+:root[data-look="winamp"] .lyrics { background: #000; padding: 8px 10px; font-family: Arial, sans-serif; font-size: 14px;
+  border: 2px solid; border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
+:root[data-look="winamp"] .lyrics .ln.on { background: #0000c6; }
+:root[data-look="winamp"] input[type="range"]::-webkit-slider-thumb { border-radius: 0; width: 10px; height: 14px; margin-top: -5px;
+  background: linear-gradient(#9c9cb8, #55556e); border: 1px solid #0e0e16; }
+:root[data-look="winamp"] input[type="range"]::-moz-range-thumb { border-radius: 0; width: 8px; height: 12px;
+  background: linear-gradient(#9c9cb8, #55556e); border: 1px solid #0e0e16; }
+:root[data-look="winamp"] [role="dialog"] { border-radius: 0; background: var(--case);
+  border: 1px solid; border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi); }

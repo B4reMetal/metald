@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <path d="M41 9h13a4 4 0 0 1 0 8h-5" fill="none" stroke="#8b939d" stroke-width="3.5" stroke-linecap="round"/>
+  <rect x="5" y="15" width="54" height="42" rx="10" fill="#d9dee4" stroke="#6f7782" stroke-width="3"/>
+  <rect x="11" y="20" width="42" height="7" rx="3.5" fill="#f2f4f6"/>
+  <rect x="5" y="31" width="54" height="17" fill="#c2410c"/>
+  <text x="32" y="44.5" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+    font-weight="800" font-size="15" letter-spacing="0.5" fill="#fff">spam</text>
+</svg>

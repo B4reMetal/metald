@@ -1,0 +1,30 @@
+{
+  "name": "radio-site",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "The radio's listening and song-list pages (built into contrib/radio/www) and the private station's page (contrib/station/www).",
+  "scripts": {
+    "dev": "vite",
+    "dev:station": "vite --config vite.station.config.ts",
+    "build": "vite build && vite build --config vite.station.config.ts",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^24.19.0",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "audiomotion-analyzer": "^4.5.4",
+    "butterchurn": "^2.6.7",
+    "butterchurn-presets": "^2.4.7",
+    "hls.js": "^1.7.3"
+  }
+}

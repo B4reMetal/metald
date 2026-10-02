@@ -1,0 +1,37 @@
+# The station's home side (next to the music): the curator and Liquidsoap. Settings in .env (mode 600):
+#   MUSIC_DIR             the library folder on this host (mounted read-only)
+#   EDGE_HOST/_PORT       the edge (edge/) to send to, over WireGuard (e.g. 10.0.0.1, 8005)
+#   EDGE_PASSWORD, EDGE_MOUNT (jpop)
+#   RELAY_URL, RELAY_SECRET   the state relay (relay/) the listening page reads
+services:
+  liquidsoap:
+    image: savonet/liquidsoap:v2.3.3
+    restart: unless-stopped
+    command: ["/station/station.liq"]
+    environment:
+      EDGE_HOST: ${EDGE_HOST:?}
+      EDGE_PORT: ${EDGE_PORT:-8005}
+      EDGE_PASSWORD: ${EDGE_PASSWORD:?}
+      EDGE_MOUNT: ${EDGE_MOUNT:-jpop}
+    volumes:
+      - ./station.liq:/station/station.liq:ro
+      - ${MUSIC_DIR:?}:/music:ro
+      - cache:/cache:ro
+
+  curator:
+    build: ./curator
+    restart: unless-stopped
+    depends_on: [liquidsoap]
+    environment:
+      RELAY_URL: ${RELAY_URL:-}
+      RELAY_SECRET: ${RELAY_SECRET:-}
+      CACHE_DIR: /cache
+    volumes:
+      - ${MUSIC_DIR:?}:/music:ro
+      - ./data:/data
+      - cache:/cache
+
+volumes:
+  # Upcoming tracks, copied here before they play (curator.py): a busy array can't stall playback.
+  cache:
+    driver_opts: {type: tmpfs, device: tmpfs, o: "size=2g"}

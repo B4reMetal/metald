@@ -1,0 +1,15 @@
+# The station's server side: holds the state the listening page shows. Reachable for updates only on the
+# WireGuard address (the home side posts), and for reading only on localhost (the proxy, behind sign-in).
+# Settings in .env (mode 600): RELAY_SECRET, and TUNNEL_ADDR, this side's WireGuard address.
+services:
+  relay:
+    image: python:3.13-alpine
+    restart: unless-stopped
+    command: ["python3", "-u", "/app/relay.py"]
+    environment:
+      RELAY_SECRET: ${RELAY_SECRET:?}
+    volumes:
+      - ./relay.py:/app/relay.py:ro
+    ports:
+      - "${TUNNEL_ADDR:?}:8102:8080"
+      - "127.0.0.1:8102:8080"

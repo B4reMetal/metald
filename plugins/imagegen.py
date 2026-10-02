@@ -13,6 +13,9 @@ Configure under env: in config.yml:
   IMAGE_GEN_VAE        VAE (default: qwen_image_2.1_vae_bf16.safetensors)
   IMAGE_GEN_STEPS      sampler steps (default: 25)
   IMAGE_GEN_CFG        classifier-free guidance (default: 1.0)
+  IMAGE_GEN_NEGATIVE   negative prompt applied to every image (default: none)
+  IMAGE_GEN_NEGATIVE_CFG  guidance used when there is a negative prompt (default: 2.5); at cfg 1
+                       the sampler ignores the negative, and above it each step runs twice
   hosting              see metald_tools/hosting.py (UPLOAD_BACKEND, UPLOAD_HEADERS, ...)
 """
 
@@ -44,6 +47,9 @@ VAE_NAME = os.environ.get("IMAGE_GEN_VAE", "qwen_image_2.1_vae_bf16.safetensors"
 # 25 steps at cfg 1 with euler/simple, per the ComfyUI template.
 GEN_STEPS = int(os.environ.get("IMAGE_GEN_STEPS", "25"))
 GEN_CFG = float(os.environ.get("IMAGE_GEN_CFG", "1.0"))
+DEFAULT_NEGATIVE = os.environ.get("IMAGE_GEN_NEGATIVE", "").strip()
+NEGATIVE_CFG = float(os.environ.get("IMAGE_GEN_NEGATIVE_CFG", "2.5"))
+MAX_NEGATIVE = 500
 
 POLL_TIMEOUT = 540  # render is ~35-55s, but with concurrent requests it can queue behind a song or video on the shared GPU
 UPLOAD_TIMEOUT = 60  # imgbb can be slow on some images; was 30, too tight
@@ -61,13 +67,21 @@ def print_schema():
             "fine, you don't need to over-engineer it yourself. you must "
             "include that exact url in your reply so the image actually "
             "gets posted - takes 30-60 seconds, so let the user know you're "
-            "working on it if it fits the conversation."
+            "working on it if it fits the conversation. use negative only for "
+            "things the image must NOT show - usually when someone asks to "
+            "leave something out or a previous render had an unwanted thing "
+            "(extra arms, text, a hat). it roughly doubles render time, so "
+            "leave it empty otherwise."
         ),
         "type": "object",
         "properties": {
             "prompt": {
                 "type": "string",
                 "description": "what to generate - a rough idea is fine, it gets expanded automatically",
+            },
+            "negative": {
+                "type": "string",
+                "description": "optional: comma-separated things to keep out of the image, e.g. 'text, watermark, extra fingers'",
             },
             "width": {"type": "integer", "description": "image width in pixels (default 1024)"},
             "height": {"type": "integer", "description": "image height in pixels (default 1024)"},
@@ -80,7 +94,15 @@ def print_schema():
     }
     print(json.dumps(schema, indent=2))
 
-def build_workflow(prompt: str, width: int, height: int) -> dict:
+def combined_negative(negative: str) -> str:
+    """The configured default negative plus this request's, bounded."""
+    parts = [p.strip() for p in (DEFAULT_NEGATIVE, negative or "") if p and p.strip()]
+    return ", ".join(parts)[:MAX_NEGATIVE]
+
+def build_workflow(prompt: str, width: int, height: int, negative: str = "") -> dict:
+    negative = combined_negative(negative)
+    # cfg 1 skips the negative branch entirely, so a negative only takes effect with more guidance.
+    cfg = NEGATIVE_CFG if negative else GEN_CFG
     return {
         "prompt": {
             # Plain UNETLoader, not UnetLoaderGGUF: these are safetensors.
@@ -94,7 +116,7 @@ def build_workflow(prompt: str, width: int, height: int) -> dict:
             "4": {"class_type": "TextEncodeQwenImage21", "inputs": {
                 "clip": ["2", 0],
                 "prompt": prompt,
-                "negative_prompt": "",
+                "negative_prompt": negative,
                 "resolution": 1024,
             }},
             "5": {"class_type": "EmptyLatentImage", "inputs": {
@@ -102,7 +124,7 @@ def build_workflow(prompt: str, width: int, height: int) -> dict:
             }},
             "6": {"class_type": "KSampler", "inputs": {
                 "seed": int(time.time() * 1000) % (2**32),
-                "steps": GEN_STEPS, "cfg": GEN_CFG,
+                "steps": GEN_STEPS, "cfg": cfg,
                 "sampler_name": "euler", "scheduler": "simple",
                 "denoise": 1.0,
                 "model": ["1", 0],
@@ -122,11 +144,13 @@ def upload_image(image_bytes: bytes) -> str:
 def refine_prompt(user_prompt: str) -> str:
     return _refine(user_prompt, vision.DEFAULT_API_URL, vision.DEFAULT_MODEL, vision.DEFAULT_API_KEY)
 
-def generate_image(prompt: str, width: int, height: int) -> str:
+def generate_image(prompt: str, width: int, height: int, negative: str = "") -> str:
     refined_prompt = refine_prompt(prompt)
     try:
-        image_bytes = comfyui.run(build_workflow(refined_prompt, width, height), "images",
+        image_bytes = comfyui.run(build_workflow(refined_prompt, width, height, negative), "images",
                                   POLL_TIMEOUT, log=lambda m: toollog.log_detail("image_gen", m))
+    except comfyui.ComfyCancelled:
+        return comfyui.CANCELLED_REPLY
     except comfyui.ComfyError as e:
         if str(e) == "backend unreachable":
             return "Error: image backend is unavailable right now"
@@ -160,6 +184,9 @@ def main():
         return
 
     if option == "--execute":
+        if not comfyui.online():
+            print(comfyui.OFFLINE_REPLY)
+            return
         if len(sys.argv) < 3:
             print("Error: Missing JSON input for execution")
             sys.exit(1)
@@ -180,7 +207,10 @@ def main():
         except (TypeError, ValueError):
             width, height = 768, 768
 
-        print(generate_image(prompt, width, height))
+        negative = input_data.get("negative") or ""
+        if not isinstance(negative, str):
+            negative = ""
+        print(generate_image(prompt, width, height, negative))
         return
 
     print("Usage: image_gen.py [--schema | --execute <json>]")

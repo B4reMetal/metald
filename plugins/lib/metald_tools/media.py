@@ -26,45 +26,61 @@ def strip_id3(data: bytes) -> bytes:
         return data
     return data[end:]
 
+def _flac_blocks(data: bytes):
+    """Split a FLAC file into its metadata blocks and the offset where audio frames start, or None."""
+    if len(data) < 8 or data[:4] != b"fLaC":
+        return None
+    i, blocks = 4, []
+    while i + 4 <= len(data):
+        header = data[i]
+        length = int.from_bytes(data[i + 1:i + 4], "big")
+        if i + 4 + length > len(data):
+            return None                      # truncated / not what we think
+        blocks.append((header & 0x7F, data[i + 4:i + 4 + length]))
+        i += 4 + length
+        if header >> 7:
+            break
+    else:
+        return None
+    if not blocks or blocks[0][0] != 0:
+        return None                          # no STREAMINFO: refuse to touch it
+    return blocks, i
+
+def _flac_join(blocks, audio: bytes) -> bytes:
+    out = bytearray(b"fLaC")
+    for n, (btype, body) in enumerate(blocks):
+        out.append((0x80 if n == len(blocks) - 1 else 0x00) | btype)
+        out += len(body).to_bytes(3, "big")
+        out += body
+    return bytes(out) + audio
+
 def strip_flac_metadata(data: bytes) -> bytes:
     """Drop every FLAC metadata block except STREAMINFO and SEEKTABLE.
 
-    ComfyUI embeds the workflow in VORBIS_COMMENT. The last-block flag is reset
-    on whichever block ends up last. Returns the input unchanged on anything
+    ComfyUI embeds the workflow in VORBIS_COMMENT. Returns the input unchanged on anything
     unparseable: a leak is better than a corrupt file.
     """
-    if len(data) < 8 or data[:4] != b"fLaC":
+    parsed = _flac_blocks(data)
+    if parsed is None:
         return data
+    blocks, audio = parsed
+    return _flac_join([b for b in blocks if b[0] in (0, 3)], data[audio:])
 
-    KEEP = {0, 3}  # STREAMINFO, SEEKTABLE
-    i = 4
-    kept = []
-    while i + 4 <= len(data):
-        header = data[i]
-        last = header >> 7
-        btype = header & 0x7F
-        length = int.from_bytes(data[i + 1:i + 4], "big")
-        if i + 4 + length > len(data):
-            return data                      # truncated / not what we think
-        if btype in KEEP:
-            kept.append((btype, data[i + 4:i + 4 + length]))
-        i += 4 + length
-        if last:
-            break
-    else:
+def tag_flac(data: bytes, tags: dict) -> bytes:
+    """Replace a FLAC file's Vorbis comments with tags (e.g. LYRICS), leaving the audio untouched."""
+    parsed = _flac_blocks(data)
+    if parsed is None:
         return data
-
-    if not kept or kept[0][0] != 0:
-        return data                          # no STREAMINFO: refuse to touch it
-
-    out = bytearray(b"fLaC")
-    for n, (btype, body) in enumerate(kept):
-        is_last = 0x80 if n == len(kept) - 1 else 0x00
-        out.append(is_last | btype)
-        out += len(body).to_bytes(3, "big")
-        out += body
-    out += data[i:]                          # audio frames, untouched
-    return bytes(out)
+    blocks, audio = parsed
+    vendor = b"metald"
+    body = bytearray(len(vendor).to_bytes(4, "little") + vendor)
+    items = [f"{k.upper()}={v}".encode() for k, v in tags.items() if v]
+    body += len(items).to_bytes(4, "little")
+    for item in items:
+        body += len(item).to_bytes(4, "little") + item
+    if len(body) >= 1 << 24:
+        return data
+    return _flac_join([b for b in blocks if b[0] != 4] + [(4, bytes(body))], data[audio:])
 
 def strip_audio_metadata(data: bytes) -> bytes:
     """Remove generator metadata, dispatching on the container."""

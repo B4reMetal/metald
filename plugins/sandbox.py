@@ -12,12 +12,14 @@ Configure under env: in config.yml:
   FLY_SANDBOX_REGION       where to boot them (default: dfw)
   FLY_SANDBOX_MEMORY_MB    guest memory (default: 512)
   SANDBOX_IMAGE            container image (default: python:3.12-slim)
+  SANDBOX_C_IMAGE          image for c and cpp, which needs a compiler (default: gcc:14)
   SANDBOX_TIMEOUT          per-command wall clock seconds (default: 60, max 300)
 """
 
 import sys
 import os
 import json
+import re
 import time
 import uuid
 import base64
@@ -40,6 +42,7 @@ FLY_REGION = os.environ.get("FLY_SANDBOX_REGION", "dfw")
 FLY_MEMORY_MB = int(os.environ.get("FLY_SANDBOX_MEMORY_MB", "512"))
 
 DEFAULT_IMAGE = os.environ.get("SANDBOX_IMAGE", "python:3.12-slim")
+C_IMAGE = os.environ.get("SANDBOX_C_IMAGE", "gcc:14")
 DEFAULT_TIMEOUT = int(os.environ.get("SANDBOX_TIMEOUT", "60"))
 MAX_TIMEOUT = 300
 POLL_INTERVAL = 2
@@ -76,7 +79,13 @@ def print_schema():
             "trying to use you as a proxy. it also rejects dynamically built "
             "or decoded code (exec, eval, piping into an interpreter): "
             "requests to 'decode and run this base64' are that same proxy "
-            "attempt wearing a hat, so refuse them the same way."
+            "attempt wearing a hat, so refuse them the same way. "
+            "c and cpp are compiled from one file and run: compiler errors "
+            "come back, so use it to check code you wrote before claiming it "
+            "works. for c or c++ always send the source itself with language "
+            "c or cpp - never write files or call a compiler from bash, which "
+            "has no compiler. no stdin, no terminal, no network, no forking - "
+            "test the logic with a small main() that prints results."
         ),
         "type": "object",
         "properties": {
@@ -86,7 +95,7 @@ def print_schema():
             },
             "language": {
                 "type": "string",
-                "enum": ["python", "bash"],
+                "enum": ["python", "bash", "c", "cpp"],
                 "description": "which interpreter to use (default: python)",
             },
         },
@@ -127,22 +136,30 @@ def fly(method, path, token, payload=None, timeout=30):
     except json.JSONDecodeError as e:
         raise SandboxError(f"fly {method} {path} returned unparseable json: {e}")
 
-def create_sandbox(origin, token, timeout_s):
+def create_sandbox(origin, token, timeout_s, image=DEFAULT_IMAGE, files=None):
     """Boot a fresh, throwaway Fly machine and return its id.
 
     Fresh per call, so one person's code cannot leave state for the next.
-    auto_destroy stops the machine even if this process dies mid-run.
+    auto_destroy stops the machine even if this process dies mid-run. files
+    maps a path in the machine to its content, written before it boots: the
+    code travels this way rather than inside the exec command, which Fly
+    rejects as too large for a file of a few hundred lines.
     """
     body = {
         "region": FLY_REGION,
         "config": {
-            "image": DEFAULT_IMAGE,
+            "image": image,
             "guest": {"cpu_kind": "shared", "cpus": 1, "memory_mb": FLY_MEMORY_MB},
             "init": {"exec": ["sleep", str(timeout_s + 60)]},
             "auto_destroy": True,
             "restart": {"policy": "no"},
         },
     }
+    if files:
+        body["config"]["files"] = [
+            {"guest_path": path, "raw_value": base64.b64encode(content.encode("utf-8")).decode("ascii")}
+            for path, content in files.items()
+        ]
     m = fly("POST", "", token, body, timeout=CREATE_TIMEOUT)
     mid = m.get("id")
     if not mid:
@@ -191,7 +208,27 @@ NETWORK_PATTERNS = (
 
 PROCESS_PATTERNS = (
     "subprocess", "os.system", "popen", "os.exec", "os.spawn", "os.fork",
-    "pty.spawn", "multiprocessing", "&", "nohup",
+    "pty.spawn", "multiprocessing", "nohup",
+)
+
+# A bash "&" that backgrounds a job - not "&&", or a redirection like ">&", "&>" or "|&".
+BASH_BACKGROUND = re.compile(r"(?<![&>|<])&(?![&>])")
+
+# Bash code that is trying to build c or c++ itself.
+BASH_COMPILE = re.compile(r"\b(cc|gcc|g\+\+|clang|c\+\+)\b|#include\s*<")
+
+# C and C++ reach the network and other processes through calls the python patterns never name.
+C_NETWORK_PATTERNS = (
+    "sys/socket", "netinet", "arpa/inet", "netdb", "getaddrinfo", "gethostbyname", "connect(",
+    "sendto(", "recvfrom(", "boost/asio",
+)
+C_PROCESS_PATTERNS = (
+    "fork(", "vfork(", "execl", "execv", "execle", "execvp", "system(", "posix_spawn", "clone(",
+    "<thread>", "pthread_create",
+)
+C_DYNAMIC_EXEC_PATTERNS = (
+    "syscall(", "asm(", "asm volatile", "__asm", "dlopen", "dlsym", "mprotect", "prot_exec",
+    "#include \"/", "#include </dev", "#include </proc",
 )
 
 # Model-written code never needs to build more code at runtime, so decode-then-run is
@@ -215,6 +252,12 @@ PROCESS_REFUSAL = (
     "not computation. tell the user what was refused, accurately."
 )
 
+COMPILE_IN_BASH_REFUSAL = (
+    "Error: refused - don't build c or c++ through bash: it has no compiler, and the c code's "
+    "operators read as shell jobs. send the source itself as code with language \"c\" (or "
+    "\"cpp\") instead - it is compiled with -Wall, run, and compiler errors come back."
+)
+
 DYNAMIC_EXEC_REFUSAL = (
     "Error: refused - this tool does not run dynamically constructed or "
     "decoded code, which is how people try to smuggle network access past "
@@ -222,17 +265,45 @@ DYNAMIC_EXEC_REFUSAL = (
     "plain code."
 )
 
-def uses_network(code: str) -> bool:
-    lowered = code.lower()
-    return any(pattern in lowered for pattern in NETWORK_PATTERNS)
+def compiled(language: str) -> bool:
+    return language in ("c", "cpp")
 
-def uses_dynamic_exec(code: str) -> bool:
+def uses_network(code: str, language: str = "python") -> bool:
     lowered = code.lower()
-    return any(pattern in lowered for pattern in DYNAMIC_EXEC_PATTERNS)
+    patterns = NETWORK_PATTERNS + (C_NETWORK_PATTERNS if compiled(language) else ())
+    return any(pattern in lowered for pattern in patterns)
 
-def spawns_process(code: str) -> bool:
+def uses_dynamic_exec(code: str, language: str = "python") -> bool:
     lowered = code.lower()
-    return any(pattern in lowered for pattern in PROCESS_PATTERNS)
+    patterns = C_DYNAMIC_EXEC_PATTERNS if compiled(language) else DYNAMIC_EXEC_PATTERNS
+    return any(pattern in lowered for pattern in patterns)
+
+def spawns_process(code: str, language: str = "python") -> bool:
+    lowered = code.lower()
+    patterns = PROCESS_PATTERNS + (C_PROCESS_PATTERNS if compiled(language) else ())
+    if any(pattern in lowered for pattern in patterns):
+        return True
+    # "&" backgrounds a job only in bash; in python it is bitwise and, in c the address-of.
+    return language == "bash" and bool(BASH_BACKGROUND.search(code))
+
+def compiles_in_bash(code: str, language: str) -> bool:
+    return language == "bash" and bool(BASH_COMPILE.search(code))
+
+SOURCE_PATHS = {"c": "/tmp/main.c", "cpp": "/tmp/main.cpp", "bash": "/tmp/main.sh", "python": "/tmp/main.py"}
+
+def source_path(language: str) -> str:
+    """Where the code is written in the machine."""
+    return SOURCE_PATHS.get(language, SOURCE_PATHS["python"])
+
+def build_command(language: str) -> str:
+    """The shell command that runs the code file, compiling it first for c and cpp."""
+    src = source_path(language)
+    if language == "c":
+        return f"cc -std=c11 -O2 -Wall -o /tmp/main {src} -lm 2>&1 && /tmp/main </dev/null"
+    if language == "cpp":
+        return f"c++ -std=c++20 -O2 -Wall -o /tmp/main {src} 2>&1 && /tmp/main </dev/null"
+    interpreter = "bash" if language == "bash" else "python3"
+    return f"{interpreter} {src} </dev/null"
 
 REVIEW_POLICY = os.environ.get("SANDBOX_SAFETY_POLICY", "")
 
@@ -249,19 +320,33 @@ def review_code(code: str, language: str):
         logger=lambda m: toollog.log_detail("sandbox", m),
     )
 
+def clip_output(output: str, limit: int = None) -> str:
+    """Keeps the start and the end of long output: compiler warnings come first, and the program's
+    own result - the line that says whether its tests passed - comes last."""
+    limit = limit or MAX_OUTPUT
+    if len(output) <= limit:
+        return output
+    head, tail = limit * 2 // 3, limit // 3
+    return (output[:head] + f"\n... ({len(output) - head - tail} chars cut from the middle) ...\n"
+            + output[-tail:])
+
 def run_code(code: str, language: str = "python") -> str:
     if not code.strip():
         return "Error: no code provided"
 
-    if uses_network(code):
+    if uses_network(code, language):
         toollog.log_detail("sandbox", f"refused network code: {code[:200]!r}")
         return NETWORK_REFUSAL
 
-    if spawns_process(code):
+    if compiles_in_bash(code, language):
+        toollog.log_detail("sandbox", f"refused c built through bash: {code[:200]!r}")
+        return COMPILE_IN_BASH_REFUSAL
+
+    if spawns_process(code, language):
         toollog.log_detail("sandbox", f"refused process-spawning code: {code[:200]!r}")
         return PROCESS_REFUSAL
 
-    if uses_dynamic_exec(code):
+    if uses_dynamic_exec(code, language):
         toollog.log_detail("sandbox", f"refused dynamic-exec code: {code[:200]!r}")
         return DYNAMIC_EXEC_REFUSAL
 
@@ -275,9 +360,7 @@ def run_code(code: str, language: str = "python") -> str:
 
     timeout_s = min(max(DEFAULT_TIMEOUT, 1), MAX_TIMEOUT)
 
-    encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
-    interpreter = "bash" if language == "bash" else "python3"
-    command = f"echo {encoded} | base64 -d | {interpreter}"
+    command = build_command(language)
 
     try:
         origin, token = resolve_gateway()
@@ -287,7 +370,8 @@ def run_code(code: str, language: str = "python") -> str:
 
     sandbox_id = None
     try:
-        sandbox_id = create_sandbox(origin, token, timeout_s)
+        sandbox_id = create_sandbox(origin, token, timeout_s, C_IMAGE if compiled(language) else DEFAULT_IMAGE,
+                                    files={source_path(language): code})
         result = run_exec(origin, token, sandbox_id, command, timeout_s)
     except SandboxError as e:
         toollog.log_detail("sandbox", f"execution failed: {e}")
@@ -303,8 +387,7 @@ def run_code(code: str, language: str = "python") -> str:
     if status == "timeout":
         return f"Error: timed out after {timeout_s}s{chr(10) + output if output else ''}"
 
-    if len(output) > MAX_OUTPUT:
-        output = output[:MAX_OUTPUT] + f"\n... (truncated, {len(output)} chars total)"
+    output = clip_output(output)
 
     if not output:
         return f"(no output, exit code {returncode})"
@@ -341,8 +424,8 @@ def main():
             print("Error: Missing required 'code' in JSON input")
             sys.exit(1)
         language = input_data.get("language") or "python"
-        if language not in ("python", "bash"):
-            print(f"Error: unsupported language {language!r} (use python or bash)")
+        if language not in ("python", "bash", "c", "cpp"):
+            print(f"Error: unsupported language {language!r} (use python, bash, c or cpp)")
             sys.exit(1)
 
         print(run_code(code, language))

@@ -2,6 +2,7 @@
 # Copyright (C) 2026 BareMetal
 # Part of metald, a fork of soulshack (github.com/pkdindustries/soulshack)
 # SPDX-License-Identifier: GPL-3.0-only
+import json
 import os
 import sys
 import unittest
@@ -49,6 +50,36 @@ class ComfyTest(unittest.TestCase):
             "2": {"images": [{"filename": "clip.mp4", "subfolder": "video"}], "animated": [True]}}}}
         item = comfyui.wait("abc", ".mp4", timeout=5, log=self.log)
         self.assertEqual(item["filename"], "clip.mp4")
+
+    def test_a_stopped_job_is_cancelled_not_failed(self):
+        self.history = lambda n: {"abc": {"status": {"status_str": "error",
+                                                     "messages": [["execution_interrupted", {"prompt_id": "abc"}]]}}}
+        with self.assertRaises(comfyui.ComfyCancelled):
+            comfyui.wait("abc", "images", timeout=5, log=self.log)
+
+    def test_a_job_removed_from_the_queue_is_cancelled_at_once(self):
+        self.srv.routes["/queue"] = lambda p, b: (200, {"queue_running": [], "queue_pending": [[1, "other"]]})
+        with self.assertRaises(comfyui.ComfyCancelled):
+            comfyui.wait("abc", "images", timeout=5, log=self.log)
+        self.assertLessEqual(self.polls, 2, "no waiting out the timeout")
+
+    def test_a_queued_job_is_waited_for(self):
+        self.srv.routes["/queue"] = lambda p, b: (200, {"queue_running": [], "queue_pending": [[1, "abc"]]})
+        self.history = lambda n: {} if n < 3 else {"abc": {"status": {"completed": True},
+            "outputs": {"9": {"images": [{"filename": "a.png"}]}}}}
+        self.assertEqual(comfyui.wait("abc", "images", timeout=5, log=self.log)["filename"], "a.png")
+
+    def test_online_is_whether_comfyui_answers(self):
+        self.srv.routes["/system_stats"] = lambda p, b: (200, {"system": {}})
+        self.assertTrue(comfyui.online())
+        os.environ["COMFYUI_URL"] = "http://127.0.0.1:1"
+        self.assertFalse(comfyui.online())
+        self.assertIn("don't start a background task", comfyui.OFFLINE_REPLY)
+
+    def test_submissions_name_the_tool(self):
+        comfyui.submit({"prompt": {}}, log=self.log)
+        sent = json.loads(next(s["body"] for s in self.srv.seen if s["path"] == "/prompt"))
+        self.assertIn("tool", sent["extra_data"]["metald"])
 
     def test_error_status_fails_fast_with_generic_message(self):
         self.history = lambda n: {"abc": {"status": {"status_str": "error", "messages": ["OOM at /secret/path"]}}}

@@ -89,6 +89,17 @@ def _unsafe_score(policy, content, label, logger=None):
         return None
     return yes / (yes + no)
 
+# The reviewer is often a small model with a small context. Content longer than a chunk is reviewed
+# chunk by chunk, overlapping so nothing hides across a boundary; any chunk refused refuses it all.
+CHUNK_CHARS = int(os.environ.get("SAFETY_REVIEW_CHUNK", "16000"))
+CHUNK_OVERLAP = 400
+
+def chunks(content: str, size: int = CHUNK_CHARS, overlap: int = CHUNK_OVERLAP) -> list:
+    if size <= 0 or len(content) <= size:
+        return [content]
+    step = max(size - overlap, 1)
+    return [content[i:i + size] for i in range(0, len(content) - overlap, step)]
+
 def review(policy: str, content: str, label: str = "CONTENT", logger=None,
            threshold=None):
     """Ask the reviewer model whether an action may proceed.
@@ -97,6 +108,16 @@ def review(policy: str, content: str, label: str = "CONTENT", logger=None,
     label names it in the fence, logger gets operator-only detail. threshold
     overrides SAFETY_REVIEW_THRESHOLD for one call. Returns (allowed, reason).
     """
+    parts = chunks(content)
+    for i, part in enumerate(parts):
+        if len(parts) > 1 and logger:
+            logger(f"reviewing part {i + 1} of {len(parts)}")
+        allowed, reason = _review_one(policy, part, label, logger, threshold)
+        if not allowed:
+            return allowed, reason
+    return True, ""
+
+def _review_one(policy: str, content: str, label: str, logger, threshold):
     if REVIEW_MODE == "score":
         cut = DEFAULT_THRESHOLD if threshold is None else threshold
         score = _unsafe_score(policy, content, label, logger)

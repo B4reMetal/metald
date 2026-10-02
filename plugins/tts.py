@@ -7,12 +7,8 @@
 speak tool for metald.
 
 Configure under env: in config.yml:
-  COMFYUI_URL          ComfyUI server (default: http://127.0.0.1:8188)
-  TTS_VOICES         extra voices, name=clip.wav,... (clips in ComfyUI's input/)
-  TTS_MAX_CHARS      longest text accepted (default: 800)
   TTS_DELETES_AT     Zipline retention (default: 12h)
-  TTS_EXAGGERATION   delivery intensity, 0.25-2.0 (default: 0.5)
-  TTS_CFG_WEIGHT     pacing/guidance, lower = slower and more expressive (default: 0.5)
+  voice settings     see metald_tools/speech.py (COMFYUI_URL, TTS_VOICES, TTS_MAX_CHARS, ...)
 """
 
 import sys
@@ -26,29 +22,11 @@ import urllib.error
 _here = os.path.dirname(os.path.abspath(__file__))
 sys.path[:0] = [_here, os.path.join(_here, "lib")]
 from metald_tools import toollog
-from metald_tools import comfyui, hosting
+from metald_tools import comfyui, hosting, speech
 from metald_tools.hosting import upload_file, HostingError
-from metald_tools.media import strip_audio_metadata as strip_metadata
 
-MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "800"))
 DELETES_AT = os.environ.get("TTS_DELETES_AT", "12h")
-EXAGGERATION = float(os.environ.get("TTS_EXAGGERATION", "0.5"))
-
-CFG_WEIGHT = float(os.environ.get("TTS_CFG_WEIGHT", "0.5"))
-
-def parse_voices(raw: str) -> dict:
-    """TTS_VOICES: comma-separated name=file pairs; each file is a short
-    reference clip in ComfyUI's input folder (voice_scottish_f=voice_scottish_f.wav)."""
-    out = {}
-    for part in raw.split(","):
-        name, _, fname = part.partition("=")
-        if name.strip() and fname.strip():
-            out[name.strip()] = fname.strip()
-    return out
-
-VOICES = parse_voices(os.environ.get("TTS_VOICES", ""))
-
-POLL_TIMEOUT = 540  # can queue behind other renders on the shared GPU; under apitimeout (10m)
+VOICES = speech.VOICES
 
 def print_schema():
     schema = {
@@ -65,9 +43,26 @@ def print_schema():
             "text": {
                 "type": "string",
                 "description": (
-                    "exactly what to say out loud, in plain words. no markup, "
-                    "no urls, no emoji - they get read literally."
+                    "exactly what to say out loud, in plain words. no urls, no emoji - "
+                    "they get read literally. the one markup understood is a timed "
+                    "pause, written [pause 1.5s], for comic timing or a beat."
                 ),
+            },
+            "style": {
+                "type": "string",
+                "description": (
+                    "how to say it, in a few plain words: emotion, energy, pace, "
+                    "manner. e.g. 'furious, almost shouting', 'a soft conspiratorial "
+                    "whisper', 'amused, laughing through the words', 'dry and "
+                    "unimpressed', 'late-night radio, smooth and low', 'excited "
+                    "sports commentator'. match it to what you are saying; leave it "
+                    "out for a natural delivery."
+                ),
+            },
+            "language": {
+                "type": "string",
+                "enum": list(speech.MOSS_LANGUAGES),
+                "description": "the language the text is in, if not English",
             },
             "voice": {
                 "type": "string",
@@ -87,50 +82,11 @@ def print_schema():
     }
     print(json.dumps(schema, indent=2))
 
-def build_workflow(text: str, seed: int, voice: str = "") -> dict:
-    wf = {
-        "prompt": {
-            "1": {"class_type": "FL_ChatterboxTTS", "inputs": {
-                "text": text,
-                "exaggeration": EXAGGERATION,
-                "cfg_weight": CFG_WEIGHT,
-                "temperature": 0.8,
-                "seed": seed,
-                # Keep the model resident: a cold load takes ~45s, a warm run ~5s.
-                "keep_model_loaded": True,
-            }},
-            "2": {"class_type": "SaveAudio", "inputs": {
-                "audio": ["1", 0], "filename_prefix": "metald_speech",
-            }},
-        }
-    }
-    # audio_prompt is optional on the node: wired only when a voice is asked
-    # for, so the stock voice stays the zero-config path.
-    if voice and voice in VOICES:
-        wf["prompt"]["3"] = {"class_type": "LoadAudio",
-                             "inputs": {"audio": VOICES[voice]}}
-        wf["prompt"]["1"]["inputs"]["audio_prompt"] = ["3", 0]
-    return wf
-
-def speak(text: str, voice: str = "") -> str:
-    text = " ".join(text.split())
-    if not text:
-        return "Error: nothing to say"
-    if len(text) > MAX_CHARS:
-        return f"Error: too long to read out ({len(text)} chars, limit {MAX_CHARS})"
-
-    seed = int(time.time() * 1000) % (2**31)
+def speak(text: str, voice: str = "", style: str = "", language: str = "") -> str:
     try:
-        audio = comfyui.run(build_workflow(text, seed, voice), "audio", POLL_TIMEOUT,
-                            log=lambda m: toollog.log_detail("tts", m))
-    except RuntimeError:
-        # Detail is in the tool log; the channel gets nothing internal.
-        return "Error: the speech backend is unavailable right now"
-
-    before = len(audio)
-    audio = strip_metadata(audio)
-    if len(audio) != before:
-        toollog.log_detail("tts", f"stripped {before - len(audio)} bytes of workflow metadata")
+        audio = speech.synthesize(text, voice, style=style, language=language)
+    except speech.SpeechError as e:
+        return f"Error: {e}"
 
     name = f"metald_speech_{int(time.time() * 1000)}.flac"
     try:
@@ -139,7 +95,7 @@ def speak(text: str, voice: str = "") -> str:
         toollog.log_detail("tts", f"upload failed: {e}")
         return "Error: speech generated but the upload failed"
 
-    toollog.log_detail("tts", f"ok {url} ({len(audio)} bytes, {len(text)} chars, voice={voice or 'default'})")
+    toollog.log_detail("tts", f"ok {url} ({len(audio)} bytes, {len(' '.join(text.split()))} chars, voice={voice or 'default'})")
     return f"url: {url}"
 
 def main():
@@ -150,12 +106,16 @@ def main():
         print_schema()
         return
     if sys.argv[1] == "--execute":
+        if not comfyui.online():
+            print(comfyui.OFFLINE_REPLY)
+            return
         try:
             data = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
         except json.JSONDecodeError:
             print("Error: could not read the request")
             return
-        print(speak(data.get("text") or "", (data.get("voice") or "").strip()))
+        print(speak(data.get("text") or "", (data.get("voice") or "").strip(), str(data.get("style") or ""),
+                    str(data.get("language") or "")))
         return
     print(f"unknown argument: {sys.argv[1]}", file=sys.stderr)
     sys.exit(1)

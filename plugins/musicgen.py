@@ -14,12 +14,15 @@ Configure under env: in config.yml:
   MUSIC_DELETES_AT     Zipline retention for generated music (default: 12h)
   MUSIC_SAFETY_REVIEW  "off" disables the lyric/style safety check
   LYRICIST_*           lyricist sub-step, see lyricist.py
+  LYRICS_ALIGN         comfyui: time each lyric line for read-along with contrib/lyricalign's nodes
+  WHISPER_URL          whisper.cpp server, the fallback for timing lyrics (lyricsync.py)
   hosting              see metald_tools/hosting.py (UPLOAD_BACKEND, UPLOAD_HEADERS, ...)
 """
 
 import sys
 import os
 import json
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -30,8 +33,8 @@ sys.path[:0] = [_here, os.path.join(_here, "lib")]
 from metald_tools import toollog
 from metald_tools import safetyreview
 from metald_tools import lyricist
-from metald_tools.media import strip_audio_metadata as strip_metadata
-from metald_tools import comfyui, hosting
+from metald_tools.media import strip_audio_metadata as strip_metadata, tag_flac
+from metald_tools import comfyui, hosting, lyricsync
 from metald_tools.hosting import upload_file, HostingError
 
 CKPT_NAME = os.environ.get("MUSIC_GEN_CKPT", "yue2_3b_bf16.safetensors")
@@ -60,7 +63,11 @@ def print_schema():
         "title": "song",
         "description": (
             "generate a song from a style description and get back a public url "
-            "to the track. it can sing: write the lyrics yourself and a lyricist "
+            "to the track. each song takes about two minutes, so when asked for more than three "
+            "at once (an album, a playlist, one per person), don't make them here: hand the whole "
+            "batch to task__start, with an objective that lists every song and says what to do "
+            "with each as it's made (e.g. queue it on the radio right away) - a reply has a time "
+            "limit, a background task has half an hour. it can sing: write the lyrics yourself and a lyricist "
             "edits them before they are sung - you must supply lyrics unless "
             "instrumental is set. the result "
             "includes the lyrics as sung, for your reference - do not paste them "
@@ -106,6 +113,7 @@ def print_schema():
         # Needs outbound network access (ComfyUI, the hosting backend).
         "sandbox": {"allowNetwork": True},
         "requires": requires(),
+        "requester": True,
     }
     print(json.dumps(schema, indent=2))
 
@@ -149,7 +157,16 @@ def build_workflow(style: str, lyrics: str, seconds: float, seed: int) -> dict:
         }
     }
 
-def generate(style: str, brief: str, lyrics: str, instrumental: bool, seconds: float) -> str:
+def timed_lyrics(audio: bytes, lyrics: str) -> str:
+    if not lyrics:
+        return ""
+    with tempfile.NamedTemporaryFile(suffix=".flac") as f:
+        f.write(audio)
+        f.flush()
+        return lyricsync.synced_lyrics(f.name, lyrics)
+
+def generate(style: str, brief: str, lyrics: str, instrumental: bool, seconds: float,
+             requested_by: str = "") -> str:
     style = style.strip()
     brief = brief.strip()
     lyrics = lyrics.strip()
@@ -180,6 +197,8 @@ def generate(style: str, brief: str, lyrics: str, instrumental: bool, seconds: f
     try:
         audio = comfyui.run(build_workflow(style, lyrics, seconds, seed), "audio", POLL_TIMEOUT,
                             log=lambda m: toollog.log_detail("music_gen", m))
+    except comfyui.ComfyCancelled:
+        return comfyui.CANCELLED_REPLY
     except RuntimeError:
         # Detail is in the tool log; the channel gets nothing internal.
         return "Error: the music backend is unavailable right now"
@@ -189,6 +208,12 @@ def generate(style: str, brief: str, lyrics: str, instrumental: bool, seconds: f
     if len(audio) != before:
         toollog.log_detail("music_gen",
                            f"stripped {before - len(audio)} bytes of ComfyUI workflow metadata")
+
+    # The lyrics travel inside the file, so whatever plays it later (the radio) shows what was sung,
+    # with each line's time when it can be worked out (read-along).
+    # The requester (set by the bot, not the model) goes along too, so the radio can credit it.
+    audio = tag_flac(audio, {"LYRICS": lyrics, "SYNCEDLYRICS": timed_lyrics(audio, lyrics),
+                             "REQUESTED_BY": requested_by})
 
     name = f"metald_{int(time.time() * 1000)}.flac"
     try:
@@ -213,6 +238,9 @@ def main():
         return
 
     if sys.argv[1] == "--execute":
+        if not comfyui.online():
+            print(comfyui.OFFLINE_REPLY)
+            return
         if not SAFETY_POLICY.strip():
             print("Error: music safety policy is not configured (set MUSIC_SAFETY_POLICY)")
             return
@@ -227,7 +255,8 @@ def main():
         seconds = float(data.get("seconds") or MAX_SECONDS)
         seconds = max(10.0, min(seconds, MAX_SECONDS))
         print(generate(data.get("style") or "", data.get("brief") or "",
-                       data.get("lyrics") or "", bool(data.get("instrumental")), seconds))
+                       data.get("lyrics") or "", bool(data.get("instrumental")), seconds,
+                       str(data.get("requested_by") or "")[:40]))
         return
 
     print(f"unknown argument: {sys.argv[1]}", file=sys.stderr)

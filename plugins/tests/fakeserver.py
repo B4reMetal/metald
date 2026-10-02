@@ -28,7 +28,7 @@ class FakeServer:
                 self.send_response(status)
                 self.end_headers()
                 self.wfile.write(out)
-            do_GET = do_POST = do_PUT = _go
+            do_GET = do_POST = do_PUT = do_HEAD = _go
 
             def log_message(self, *a):
                 pass

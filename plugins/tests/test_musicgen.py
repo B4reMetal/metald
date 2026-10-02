@@ -21,7 +21,7 @@ class TestGenerateWiring(unittest.TestCase):
     def setUp(self):
         self.calls = {}
         for mod, name in ((comfyui, "run"), (musicgen, "upload_file"),
-                          (safetyreview, "review"), (lyricist, "write")):
+                          (safetyreview, "review"), (lyricist, "write"), (musicgen, "timed_lyrics")):
             self.addCleanup(setattr, mod, name, getattr(mod, name))
         def render(wf, output, timeout, log=None):
             self.calls.setdefault("lyrics", wf["prompt"]["2"]["inputs"]["lyrics"])
@@ -63,6 +63,14 @@ class TestGenerateWiring(unittest.TestCase):
         out = musicgen.generate("folk", "", "my draft", False, 60)
         self.assertTrue(out.startswith("Refused: slur"))
         self.assertNotIn("lyrics", self.calls)
+
+    def test_requester_is_tagged_into_the_file(self):
+        comfyui.run = lambda *a, **k: b"fLaC" + bytes([0x80]) + (34).to_bytes(3, "big") + b"\x00" * 34 + b"\xff\xf8"
+        uploaded = []
+        musicgen.upload_file = lambda audio, *a, **k: uploaded.append(audio) or "https://files.example.com/u/x.flac"
+        musicgen.timed_lyrics = lambda audio, lyrics: ""
+        musicgen.generate("folk", "", "my draft", False, 60, requested_by="alice")
+        self.assertIn(b"REQUESTED_BY=alice", uploaded[0])
 
 if __name__ == "__main__":
     unittest.main()

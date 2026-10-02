@@ -128,6 +128,8 @@ def generate(prompt: str, seconds: int, aspect: str) -> str:
     try:
         video = strip_metadata(comfyui.run(build_workflow(prompt, seconds, aspect, seed), ".mp4",
                                            POLL_TIMEOUT, log=lambda m: toollog.log_detail("video_gen", m)))
+    except comfyui.ComfyCancelled:
+        return comfyui.CANCELLED_REPLY
     except RuntimeError as e:
         toollog.log_detail("video_gen", f"failed: {e}")
         return "Error: the video backend is unavailable right now"
@@ -147,6 +149,9 @@ def main():
         print_schema()
         return
     if sys.argv[1] == "--execute":
+        if not comfyui.online():
+            print(comfyui.OFFLINE_REPLY)
+            return
         if not SAFETY_POLICY.strip():
             print("Error: video safety policy is not configured (set VIDEO_SAFETY_POLICY)")
             return

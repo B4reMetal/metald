@@ -143,6 +143,13 @@ func RegisterIRCTools(registry *tools.ToolRegistry) {
 		"memory__remember": newMemoryRememberTool,
 		"memory__recall":   newMemoryRecallTool,
 		"memory__forget":   newMemoryForgetTool,
+		"history__search":  newHistorySearchTool,
+		"task__start":      newTaskStartTool,
+		"task__schedule":   newTaskScheduleTool,
+		"goal__propose":    newGoalProposeTool,
+		"todo__set":        newTodoSetTool,
+		"todo__update":     newTodoUpdateTool,
+		"task__note":       newTaskNoteTool,
 		"irc__remind":      newIrcRemindTool,
 		"irc__reminders":   newIrcRemindersTool,
 	}

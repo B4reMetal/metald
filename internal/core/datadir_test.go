@@ -9,7 +9,15 @@ import (
 	"testing"
 )
 
+// keepDataDir restores the data directory TestMain chose once a test that changes it is done.
+func keepDataDir(t *testing.T) {
+	prev := DataPath("")
+	t.Cleanup(func() { SetDataDir(prev) })
+}
+
 func TestDataPathDefaultsToWorkingDirectory(t *testing.T) {
+	keepDataDir(t)
+	SetDataDir(".")
 	SetDataDir("")
 	if got := DataPath("x.db"); got != "x.db" {
 		t.Errorf("got %q", got)
@@ -17,8 +25,8 @@ func TestDataPathDefaultsToWorkingDirectory(t *testing.T) {
 }
 
 func TestDataPathJoinsDataDir(t *testing.T) {
+	keepDataDir(t)
 	SetDataDir("/data")
-	defer SetDataDir(".")
 	if got := DataPath("x.db"); got != filepath.Join("/data", "x.db") {
 		t.Errorf("got %q", got)
 	}

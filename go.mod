@@ -12,7 +12,8 @@ require (
 	modernc.org/sqlite v1.59.0
 )
 
-//replace github.com/alexschlessinger/pollytool => ../polly
+// Patched copy: reads reasoning_content from OpenAI-compatible servers (third_party/pollytool/METALD.md).
+replace github.com/alexschlessinger/pollytool => ./third_party/pollytool
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

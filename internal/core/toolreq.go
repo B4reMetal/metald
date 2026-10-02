@@ -10,28 +10,47 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 // ShellToolRequirements asks a shell tool for its schema and returns the
 // "requires" list: environment variables it cannot work without.
-func ShellToolRequirements(command string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, command, "--schema").Output()
-	if err != nil {
-		return nil, err
-	}
-	var meta struct {
-		Requires []string `json:"requires"`
-	}
-	if err := json.Unmarshal(out, &meta); err != nil {
-		return nil, err
-	}
-	return meta.Requires, nil
+// ShellToolMeta is what the bot reads from a plugin's --schema beyond the
+// tool definition itself.
+type ShellToolMeta struct {
+	Requires []string `json:"requires"`
+	// Announce false keeps "calling <tool>" out of the channel, for tools whose
+	// output is itself the visible effect.
+	Announce *bool `json:"announce"`
+	// Requester true has the bot pass the asking nick as "requested_by".
+	Requester bool `json:"requester"`
 }
 
-// MissingEnv returns the keys that are unset or blank.
+// ReadShellToolMeta runs a plugin's --schema and returns its metadata.
+func ReadShellToolMeta(command string) (ShellToolMeta, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var meta ShellToolMeta
+	out, err := exec.CommandContext(ctx, command, "--schema").Output()
+	if err != nil {
+		return meta, err
+	}
+	err = json.Unmarshal(out, &meta)
+	return meta, err
+}
+
+var quietTools sync.Map
+
+// SetQuietTool records that a tool's calls are not announced in the channel.
+func SetQuietTool(name string) { quietTools.Store(name, true) }
+
+// QuietTool reports whether a tool's calls are not announced in the channel.
+func QuietTool(name string) bool {
+	_, ok := quietTools.Load(name)
+	return ok
+}
+
 func MissingEnv(keys []string, getenv func(string) string) []string {
 	if getenv == nil {
 		getenv = os.Getenv

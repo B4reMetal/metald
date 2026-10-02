@@ -15,6 +15,17 @@ var PromptKeys = []string{
 	"replyscreenpolicy",
 	"memorypolicy",
 	"memoryframe",
+	"recapprompt",
+	"recapframe",
+	"backlogframe",
+	"relevantframe",
+	"toolretrynote",
+	"emptyreplynote",
+	"taskprompt",
+	"goalprompt",
+	"goalroundprompt",
+	"goalverifyprompt",
+	"delegateprompt",
 }
 
 // MissingPrompts returns the prompt keys that are empty or whitespace.
@@ -30,6 +41,17 @@ func MissingPrompts(b *BotConfig) []string {
 		"replyscreenpolicy":  b.ReplyScreenPolicy,
 		"memorypolicy":       b.MemoryPolicy,
 		"memoryframe":        b.MemoryFrame,
+		"recapprompt":        b.RecapPrompt,
+		"recapframe":         b.RecapFrame,
+		"backlogframe":       b.BacklogFrame,
+		"relevantframe":      b.RelevantFrame,
+		"toolretrynote":      b.ToolRetryNote,
+		"emptyreplynote":     b.EmptyReplyNote,
+		"taskprompt":         b.TaskPrompt,
+		"goalprompt":         b.GoalPrompt,
+		"goalroundprompt":    b.GoalRoundPrompt,
+		"goalverifyprompt":   b.GoalVerifyPrompt,
+		"delegateprompt":     b.DelegatePrompt,
 	}
 	var missing []string
 	for _, k := range PromptKeys {

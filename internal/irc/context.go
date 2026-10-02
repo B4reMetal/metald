@@ -165,6 +165,20 @@ func (c ChatContext) GetNetwork() string {
 	return c.Config.Server.Name
 }
 
+func (c ChatContext) GetSourceMask() string {
+	if c.event == nil || c.event.Source == nil {
+		return ""
+	}
+	return c.event.Source.String()
+}
+
+func (c ChatContext) GetTarget() string {
+	if c.event == nil || len(c.event.Params) == 0 {
+		return ""
+	}
+	return c.event.Params[0]
+}
+
 func (c ChatContext) GetBotNick() string {
 	return c.client.GetNick()
 }
@@ -262,6 +276,7 @@ func (c ChatContext) ReplyAction(message string) {
 		c.client.Cmd.Message(c.event.Source.Name, message)
 		return
 	}
+	c.logger.Debug("action_sent", "message", message)
 	c.client.Cmd.Action(target, message)
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 )
@@ -90,7 +91,176 @@ func OpenMemoryStore(path string) (*MemoryStore, error) {
 		return nil, fmt.Errorf("create memory indexes: %w", err)
 	}
 
+	// Full-text index over facts, so a message can pull in memories about what it mentions.
+	var existing int
+	_ = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'memories_fts'`).Scan(&existing)
+	if _, err := db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+			subject, fact, content='memories', content_rowid='id', tokenize='porter unicode61');
+		CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+			INSERT INTO memories_fts(rowid, subject, fact) VALUES (new.id, new.subject, new.fact);
+		END;
+		CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+			INSERT INTO memories_fts(memories_fts, rowid, subject, fact) VALUES ('delete', old.id, old.subject, old.fact);
+		END;
+		CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+			INSERT INTO memories_fts(memories_fts, rowid, subject, fact) VALUES ('delete', old.id, old.subject, old.fact);
+			INSERT INTO memories_fts(rowid, subject, fact) VALUES (new.id, new.subject, new.fact);
+		END;
+	`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create memory search index: %w", err)
+	}
+	if existing == 0 {
+		if _, err := db.Exec(`INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("build memory search index: %w", err)
+		}
+	}
+
 	return &MemoryStore{db: db}, nil
+}
+
+// Relevant returns memories that bear on text: facts about any known subject it names, then facts
+// that share at least two of its words, or one long distinctive one. The names in exclude (the
+// speaker, whose facts are injected separately, and the bot's own names, which appear in every
+// addressed message) neither count as a mention nor as a word.
+func (m *MemoryStore) Relevant(network, text string, exclude []string, limit int) ([]Memory, error) {
+	if limit <= 0 || strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	skip := map[string]bool{}
+	for _, e := range exclude {
+		if e = normalizeSubject(e); e != "" {
+			skip[e] = true
+		}
+	}
+
+	m.mu.Lock()
+	subjects, err := m.subjects(network)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	words := map[string]bool{}
+	var kept []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r == '_' || r == '-' || r == '|' || r == '`' || r == '^' || r == '[' || r == ']' ||
+			(r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || r > 127)
+	}) {
+		trimmed := strings.Trim(w, "_|`^-")
+		if skip[w] || skip[trimmed] {
+			continue
+		}
+		words[w] = true
+		words[trimmed] = true
+		kept = append(kept, trimmed)
+	}
+
+	var out []Memory
+	seen := map[int64]bool{}
+	add := func(mem Memory) {
+		if len(out) < limit && !seen[mem.ID] && !skip[mem.Subject] {
+			seen[mem.ID] = true
+			out = append(out, mem)
+		}
+	}
+
+	// Named subjects first: a nick in the message is the strongest signal.
+	perSubject := max(1, limit/3)
+	for _, s := range subjects {
+		if skip[s] || len(s) < 3 || !words[s] {
+			continue
+		}
+		ms, err := m.Recall(network, s, perSubject)
+		if err != nil {
+			return nil, err
+		}
+		for _, mem := range ms {
+			add(mem)
+		}
+	}
+
+	if len(out) >= limit {
+		return out, nil
+	}
+	match := FTSQuery(strings.Join(kept, " "))
+	if match == "" {
+		return out, nil
+	}
+	m.mu.Lock()
+	rows, err := m.db.Query(
+		`SELECT m.id, m.network, m.subject, m.fact, m.author, m.channel, m.created
+		 FROM memories_fts f JOIN memories m ON m.id = f.rowid
+		 WHERE memories_fts MATCH ? AND m.network = ?
+		 ORDER BY bm25(memories_fts) LIMIT 40`, match, network)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	candidates, err := scanMemories(rows)
+	rows.Close()
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	terms := strings.Fields(strings.NewReplacer(`"`, "", " OR ", " ").Replace(match))
+	for _, mem := range candidates {
+		if relevantEnough(terms, mem.Subject+" "+mem.Fact) {
+			add(mem)
+		}
+	}
+	return out, nil
+}
+
+// relevantEnough reports whether a fact shares two of the message's words, or one of at least
+// seven letters. One short shared word ("now", "song") says nothing about what the message is about.
+func relevantEnough(terms []string, fact string) bool {
+	factWords := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(fact), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		factWords[stem(w)] = true
+	}
+	shared := 0
+	for _, t := range terms {
+		if factWords[stem(t)] {
+			if len(t) >= 7 {
+				return true
+			}
+			shared++
+		}
+	}
+	return shared >= 2
+}
+
+// stem is a crude suffix strip, enough to match "robots" with "robot" and "tuned" with "tune".
+func stem(w string) string {
+	for _, suf := range []string{"ing", "ed", "es", "s"} {
+		if len(w) > len(suf)+3 && strings.HasSuffix(w, suf) {
+			return w[:len(w)-len(suf)]
+		}
+	}
+	return w
+}
+
+// subjects lists every subject with a memory on a network. Callers hold m.mu.
+func (m *MemoryStore) subjects(network string) ([]string, error) {
+	rows, err := m.db.Query(`SELECT DISTINCT subject FROM memories WHERE network = ?`, network)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // hasColumn reports whether a table already has a column, so the migration is

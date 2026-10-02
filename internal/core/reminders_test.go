@@ -5,8 +5,10 @@
 package core
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -269,5 +271,51 @@ func TestLateDeliveryIsMarked(t *testing.T) {
 
 	if !strings.Contains(gotMessage, "late") {
 		t.Errorf("expected a lateness note, got %q", gotMessage)
+	}
+}
+
+// A reminder set on a network is delivered by that network's scheduler, and survives a reload.
+func TestReminderFiresOnItsNetwork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reminders.json")
+	s := NewReminderStore(path)
+	r, err := s.Add("net", "dave", "#chat", "stand up", "alice", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := r.Due.Add(time.Second)
+	if due, _ := NewReminderStore(path).PopDue(later, "other"); len(due) != 0 {
+		t.Errorf("another network delivered it: %+v", due)
+	}
+	if due, _ := NewReminderStore(path).PopDue(later, "net"); len(due) != 1 || due[0].ID != r.ID {
+		t.Errorf("due on its network = %+v", due)
+	}
+}
+
+func TestAdoptUnscopedReminders(t *testing.T) {
+	s := newTestReminderStore(t)
+	r, _ := s.Add("", "dave", "#chat", "old", "alice", time.Minute)
+	if n := s.AdoptUnscopedReminders("net"); n != 1 {
+		t.Fatalf("adopted %d, want 1", n)
+	}
+	if due, _ := s.PopDue(r.Due.Add(time.Second), "net"); len(due) != 1 {
+		t.Errorf("adopted reminder not due on its network: %+v", due)
+	}
+}
+
+// Reminders set in parallel all reach the file.
+func TestParallelAddsAllSaved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reminders.json")
+	s := NewReminderStore(path)
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = s.Add("net", fmt.Sprint("nick", i), "#chat", "x", "alice", time.Hour)
+		}()
+	}
+	wg.Wait()
+	if got := NewReminderStore(path).List("net"); len(got) != 5 {
+		t.Errorf("reloaded %d reminders, want 5", len(got))
 	}
 }

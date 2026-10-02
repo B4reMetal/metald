@@ -73,3 +73,20 @@ func (b *ChannelErrorBehavior) Execute(ctx irc.ChatContextInterface, event *girc
 	slog.Error("channel_join_failed", "channel", channel, "reason", reason)
 	ctx.FatalError(fmt.Errorf("cannot join %s: %s", channel, reason))
 }
+
+// SendErrorBehavior logs a server refusing something the bot sent, which is otherwise invisible: a send
+// that is not a reply to a request (a reminder, a task result) has no other trace of failing.
+type SendErrorBehavior struct{}
+
+func (b *SendErrorBehavior) Name() string { return "send_error" }
+
+func (b *SendErrorBehavior) Events() []string {
+	return []string{girc.ERR_NOSUCHNICK, girc.ERR_CANNOTSENDTOCHAN, girc.ERR_NOTONCHANNEL, "FAIL"}
+}
+
+func (b *SendErrorBehavior) Check(ctx irc.ChatContextInterface, event *girc.Event) bool { return true }
+
+func (b *SendErrorBehavior) Execute(ctx irc.ChatContextInterface, event *girc.Event) {
+	slog.Warn("irc_send_refused", "network", ctx.GetConfig().Server.Name, "command", event.Command,
+		"params", event.Params)
+}

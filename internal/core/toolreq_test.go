@@ -22,7 +22,7 @@ func fakeTool(t *testing.T, schema string) string {
 
 func TestShellToolRequirementsReadsList(t *testing.T) {
 	p := fakeTool(t, `{"title":"x","requires":["A_KEY","B_URL"]}`)
-	got, err := ShellToolRequirements(p)
+	got, err := readRequires(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestShellToolRequirementsReadsList(t *testing.T) {
 
 func TestShellToolRequirementsAbsentMeansNone(t *testing.T) {
 	p := fakeTool(t, `{"title":"x","sandbox":{"allowNetwork":true}}`)
-	got, err := ShellToolRequirements(p)
+	got, err := readRequires(p)
 	if err != nil || len(got) != 0 {
 		t.Errorf("got %v, %v", got, err)
 	}
@@ -41,7 +41,7 @@ func TestShellToolRequirementsAbsentMeansNone(t *testing.T) {
 
 func TestShellToolRequirementsBadOutputIsAnError(t *testing.T) {
 	p := fakeTool(t, `not json`)
-	if _, err := ShellToolRequirements(p); err == nil {
+	if _, err := readRequires(p); err == nil {
 		t.Error("expected an error")
 	}
 }
@@ -51,5 +51,28 @@ func TestMissingEnvTreatsBlankAsMissing(t *testing.T) {
 	got := MissingEnv([]string{"SET", "BLANK", "UNSET"}, func(k string) string { return env[k] })
 	if len(got) != 2 || got[0] != "BLANK" || got[1] != "UNSET" {
 		t.Errorf("got %v", got)
+	}
+}
+
+func readRequires(p string) ([]string, error) {
+	meta, err := ReadShellToolMeta(p)
+	return meta.Requires, err
+}
+
+func TestReadShellToolMetaAnnounce(t *testing.T) {
+	quiet, _ := ReadShellToolMeta(fakeTool(t, `{"title":"x","announce":false}`))
+	if quiet.Announce == nil || *quiet.Announce {
+		t.Fatalf("announce:false not read: %+v", quiet.Announce)
+	}
+	plain, _ := ReadShellToolMeta(fakeTool(t, `{"title":"x"}`))
+	if plain.Announce != nil {
+		t.Fatal("absent announce must stay nil (announced by default)")
+	}
+}
+
+func TestQuietTools(t *testing.T) {
+	SetQuietTool("slap__slap")
+	if !QuietTool("slap__slap") || QuietTool("websearch__web_search") {
+		t.Fatal("quiet tool set is wrong")
 	}
 }

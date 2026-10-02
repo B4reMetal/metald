@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"B4reMetal/metald/internal/core"
 	"B4reMetal/metald/internal/irc"
 )
 
@@ -128,15 +129,7 @@ func isScreened(ctx irc.ChatContextInterface, list []string) bool {
 	return screened(list, ctx.GetSource())
 }
 
-func screened(list []string, nick string) bool {
-	n := strings.ToLower(strings.TrimRight(nick, "_|`^"))
-	for _, want := range list {
-		if strings.ToLower(strings.TrimSpace(want)) == n {
-			return true
-		}
-	}
-	return false
-}
+func screened(list []string, nick string) bool { return core.NickListed(list, nick) }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
@@ -153,3 +146,6 @@ func modelNameOnly(model string) string {
 	}
 	return model
 }
+
+// IsScreenedNick reports whether nick is on a screening list.
+func IsScreenedNick(list []string, nick string) bool { return screened(list, nick) }

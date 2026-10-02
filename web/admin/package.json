@@ -1,0 +1,21 @@
+{
+  "name": "metald-admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "The bot's operator page; built into internal/admin/dist and embedded in the binary.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^24.19.0",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2"
+  }
+}

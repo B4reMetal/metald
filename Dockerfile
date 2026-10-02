@@ -9,6 +9,8 @@ ARG TARGETOS TARGETARCH
 RUN apk add --no-cache git
 WORKDIR /src
 COPY go.mod go.sum ./
+# The patched pollytool that go.mod's replace points at must be there before the download.
+COPY third_party third_party
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -o /metald ./cmd/metald

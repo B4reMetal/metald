@@ -9,16 +9,20 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/lrstanley/girc"
 
+	"B4reMetal/metald/internal/admin"
 	"B4reMetal/metald/internal/behaviors"
 	"B4reMetal/metald/internal/commands"
 	"B4reMetal/metald/internal/config"
 	"B4reMetal/metald/internal/core"
 	"B4reMetal/metald/internal/irc"
+	"B4reMetal/metald/internal/llm"
 )
 
 // Run starts the IRC bot with the given configuration
@@ -47,6 +51,15 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 
 	sys := NewSystem(cfg)
 
+	// Write changed conversations to disk until shutdown, then once more before returning.
+	if ps, ok := sys.GetSessionStore().(*core.PersistentSessionStore); ok {
+		flushCtx, stopFlush := context.WithCancel(ctx)
+		flushed := make(chan struct{})
+		go func() { ps.Run(flushCtx); close(flushed) }()
+		defer func() { stopFlush(); <-flushed }()
+	}
+	go llm.RunChatLogPruner(ctx, cfg.Session.HistoryDays)
+
 	// Initialize command registry
 	cmdRegistry := commands.NewRegistry()
 	cmdRegistry.Register(&commands.SetCommand{})
@@ -66,6 +79,14 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 	cmdRegistry.Register(&commands.ModelsCommand{})
 	cmdRegistry.Register(&commands.PromptCommand{})
 	cmdRegistry.Register(&commands.MemoriesCommand{})
+	cmdRegistry.Register(&commands.RecapCommand{})
+	cmdRegistry.Register(&commands.SuspicionCommand{})
+	cmdRegistry.Register(&commands.NowPlayingCommand{})
+	cmdRegistry.Register(&commands.SkipCommand{})
+	cmdRegistry.Register(&commands.TaskCommand{})
+	cmdRegistry.Register(&commands.TasksCommand{})
+	cmdRegistry.Register(&commands.GoalCommand{})
+	cmdRegistry.Register(&commands.ScheduleCommand{})
 
 	// Initialize behavior registry (order matters: passive watchers first, addressed last as fallback)
 	behaviorRegistry := behaviors.NewRegistry()
@@ -73,6 +94,7 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 	behaviorRegistry.Register(&behaviors.ConnectedBehavior{})
 	behaviorRegistry.Register(&behaviors.NickErrorBehavior{})
 	behaviorRegistry.Register(&behaviors.ChannelErrorBehavior{})
+	behaviorRegistry.Register(&behaviors.SendErrorBehavior{})
 	// Reactive behaviors
 	behaviorRegistry.Register(&behaviors.URLBehavior{})
 	behaviorRegistry.Register(&behaviors.OpBehavior{})
@@ -85,6 +107,8 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 		nets = []*config.ServerConfig{cfg.Server}
 	}
 
+	startAdmin(ctx, cfg, nets)
+
 	// Memories written before this bot knew about networks carry no network of their own.
 	if len(nets) > 0 && nets[0].Name != "" {
 		if store, err := core.Memories(); err == nil {
@@ -94,10 +118,13 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 				slog.Info("memories_assigned_to_network", "network", nets[0].Name, "count", n)
 			}
 		}
+		if n := core.Reminders().AdoptUnscopedReminders(nets[0].Name); n > 0 {
+			slog.Info("reminders_assigned_to_network", "network", nets[0].Name, "count", n)
+		}
 	}
 
 	if len(nets) == 1 {
-		return runNetwork(ctx, cfg.ForNetwork(nets[0]), sys, behaviorRegistry)
+		return runNetwork(ctx, cfg.ForNetwork(nets[0]), sys, behaviorRegistry, cmdRegistry)
 	}
 
 	errs := make(chan error, len(nets))
@@ -107,7 +134,7 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 		go func(n *config.ServerConfig) {
 			defer wg.Done()
 			netCfg := cfg.ForNetwork(n)
-			if err := runNetwork(ctx, netCfg, sys, behaviorRegistry); err != nil {
+			if err := runNetwork(ctx, netCfg, sys, behaviorRegistry, cmdRegistry); err != nil {
 				slog.Error("network_failed", "network", n.Name, "error", err.Error())
 				errs <- fmt.Errorf("network %s: %w", n.Name, err)
 			}
@@ -123,7 +150,7 @@ func Run(ctx context.Context, cfg *config.Configuration) error {
 }
 
 // runNetwork connects one network and serves it until the context ends.
-func runNetwork(ctx context.Context, cfg *config.Configuration, sys core.System, behaviorRegistry *behaviors.Registry) error {
+func runNetwork(ctx context.Context, cfg *config.Configuration, sys core.System, behaviorRegistry *behaviors.Registry, cmdRegistry *commands.Registry) error {
 	// Channel for fatal IRC errors (nick taken, channel join failures)
 	fatalErr := make(chan error, 1)
 
@@ -163,6 +190,12 @@ func runNetwork(ctx context.Context, cfg *config.Configuration, sys core.System,
 		log.Info("irc_client_closed")
 	}()
 
+	// Idle conversations on this network are folded into their channel recap.
+	go llm.RunIdleFolder(ctx, cfg, sys.GetSessionStore())
+
+	// Background tasks on this network run one at a time, posting results where they were asked for.
+	go llm.RunTaskRunner(ctx, cfg, sys, ircClient, fatalErr)
+
 	// Reminders fire outside any request context, so delivery lives here rather than in the tool that
 	// schedules them.
 	go core.RunReminderScheduler(ctx, core.Reminders(), cfg.Server.Name, func(channel, message string) bool {
@@ -191,6 +224,7 @@ func runNetwork(ctx context.Context, cfg *config.Configuration, sys core.System,
 			done := core.Requests().Track(chatCtx.GetLockKey(), chatCtx.GetRequestID(), e.Source.Name, cancel)
 			defer done()
 		}
+		behaviors.ObserveLine(chatCtx, &e, cmdRegistry)
 		behaviorRegistry.Process(chatCtx, &e)
 	})
 
@@ -242,4 +276,44 @@ func runNetwork(ctx context.Context, cfg *config.Configuration, sys core.System,
 	}
 
 	return fmt.Errorf("failed to connect after %d attempts", maxRetries)
+}
+
+// startAdmin serves the operator page when it is configured; without a token it stays off.
+func startAdmin(ctx context.Context, cfg *config.Configuration, nets []*config.ServerConfig) {
+	if cfg.Bot.AdminListen == "" {
+		return
+	}
+	if cfg.Bot.AdminToken == "" {
+		core.GetLogger().Warn("admin_disabled", "reason", "adminlisten is set but admintoken is empty")
+		return
+	}
+	names := make([]string, 0, len(nets))
+	for _, n := range nets {
+		names = append(names, n.Name)
+	}
+	var proxies []netip.Prefix
+	for _, p := range cfg.Bot.AdminTrustedProxies {
+		prefix, err := netip.ParsePrefix(p)
+		if addr, aerr := netip.ParseAddr(p); aerr == nil {
+			prefix, err = addr.Prefix(addr.BitLen())
+		}
+		if err != nil {
+			core.GetLogger().Error("admin_bad_proxy", "proxy", p, "error", err.Error())
+			continue
+		}
+		proxies = append(proxies, prefix)
+	}
+	srv, err := admin.NewFromCore(admin.Config{Token: cfg.Bot.AdminToken, Version: "v" + Version, Networks: names,
+		Started: time.Now(), ComfyURL: os.Getenv("COMFYUI_URL"), RadioURL: os.Getenv("RADIO_API_URL"),
+		TrustedProxies: proxies, UserHeader: cfg.Bot.AdminUserHeader, Users: cfg.Bot.AdminUsers}, core.GetLogger())
+	if err != nil {
+		core.GetLogger().Error("admin_failed", "error", err.Error())
+		return
+	}
+	go func() {
+		core.GetLogger().Info("admin_listening", "addr", cfg.Bot.AdminListen)
+		if err := srv.Run(ctx, cfg.Bot.AdminListen); err != nil {
+			core.GetLogger().Error("admin_failed", "error", err.Error())
+		}
+	}()
 }

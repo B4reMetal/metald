@@ -103,3 +103,36 @@ func TestRenderIRCFormatting(t *testing.T) {
 		})
 	}
 }
+
+// Code posted to the channel keeps its array indexes: s[i] is an index, not an italic tag.
+func TestCodeIndexesAreNotFormatting(t *testing.T) {
+	for _, code := range []string{
+		"        if i + 1 < len(s) and vals[s[i]] < vals[s[i+1]]:",
+		"            result -= vals[s[i]]",
+		"for (int i = 0; i < n; i++) a[i] = b[i];",
+		"grid[u][b] = x[i]",
+		"f(x)[i]",
+	} {
+		if got := RenderIRCFormatting(code); got != code {
+			t.Errorf("%q rendered as %q", code, got)
+		}
+	}
+	if got := RenderIRCFormatting("this is [i]really[/i] good"); got != "this is \x1dreally\x1d good" {
+		t.Errorf("real italic tag broken: %q", got)
+	}
+}
+
+// Arithmetic is not emphasis; markdown emphasis still is.
+func TestAsterisksInCodeAreNotEmphasis(t *testing.T) {
+	for _, code := range []string{"result = a*b*c", "x = y * z * w", "2**10 is 1024", "a**b**c"} {
+		if got := RenderIRCFormatting(code); got != code {
+			t.Errorf("%q rendered as %q", code, got)
+		}
+	}
+	if got := RenderIRCFormatting("this is *really* good"); got != "this is \x1dreally\x1d good" {
+		t.Errorf("italic = %q", got)
+	}
+	if got := RenderIRCFormatting("**loud** and *soft*"); got != "\x02loud\x02 and \x1dsoft\x1d" {
+		t.Errorf("bold and italic = %q", got)
+	}
+}

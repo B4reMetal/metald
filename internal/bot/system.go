@@ -7,6 +7,7 @@ package bot
 import (
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -62,6 +63,7 @@ func NewSystem(c *config.Configuration) core.System {
 
 	// Register native IRC tools with polly's registry
 	irc.RegisterIRCTools(s.Tools)
+	s.Tools.RegisterNative("task__delegate", llm.NewDelegateTool)
 
 	// Load all tools from configuration (polly now handles native, shell, and MCP tools)
 	adminTools := make(map[string]bool, len(c.Bot.AdminTools))
@@ -73,7 +75,7 @@ func NewSystem(c *config.Configuration) core.System {
 	// credential it declares, or the bot does not start.
 	unusable := 0
 	if len(c.Bot.Tools) > 0 {
-		for _, toolSpec := range c.Bot.Tools {
+		for _, toolSpec := range withTaskToolset(c.Bot.Tools) {
 			result, err := s.Tools.LoadToolAuto(toolSpec)
 			if err != nil {
 				slog.Error("tool_load_failed", "tool", toolSpec, "error", err)
@@ -81,7 +83,8 @@ func NewSystem(c *config.Configuration) core.System {
 				continue
 			}
 			if result.Type == "shell" {
-				req, err := core.ShellToolRequirements(toolSpec)
+				meta, err := core.ReadShellToolMeta(toolSpec)
+				req := meta.Requires
 				if err != nil {
 					slog.Error("tool_requirements_unreadable", "tool", toolSpec, "error", err)
 					unusable++
@@ -92,6 +95,21 @@ func NewSystem(c *config.Configuration) core.System {
 						"keys", strings.Join(missing, ", "), "hint", "set them under env: in config.yml, or remove the tool")
 					unusable++
 					continue
+				}
+			}
+
+			if result.Type == "shell" {
+				if meta, err := core.ReadShellToolMeta(toolSpec); err == nil {
+					for _, server := range result.Servers {
+						for _, name := range server.ToolNames {
+							if meta.Announce != nil && !*meta.Announce {
+								core.SetQuietTool(name)
+							}
+							if tool, ok := s.Tools.Get(name); ok && meta.Requester {
+								s.Tools.Register(irc.NewRequesterTool(tool))
+							}
+						}
+					}
 				}
 			}
 
@@ -117,12 +135,13 @@ func NewSystem(c *config.Configuration) core.System {
 		os.Exit(1)
 	}
 
-	// initialize sessions with pollytool's SyncMapSessionStore
-	s.Store = sessions.NewSyncMapSessionStore(&sessions.Metadata{
-		MaxHistoryTokens: c.Session.MaxContext,
-		TTL:              c.Session.TTL,
-		SystemPrompt:     c.Bot.Prompt,
-	})
+	// Conversations are saved to the context database, so a restart resumes them.
+	db, err := core.Context()
+	if err != nil {
+		slog.Error("context_db_unavailable", "error", err.Error())
+		os.Exit(1)
+	}
+	s.Store = core.NewPersistentSessionStore(db, &sessions.Metadata{SystemPrompt: c.Bot.Prompt})
 
 	// Initialize LLM
 	s.UpdateLLM(*c.API)
@@ -136,4 +155,19 @@ func NewSystem(c *config.Configuration) core.System {
 	slog.Info("system_initialized", fields...)
 
 	return s
+}
+
+// withTaskToolset adds the rest of the background-work tools when task__start is enabled: they only
+// make sense together, and the ones used inside a task are hidden from chat anyway.
+func withTaskToolset(specs []string) []string {
+	if !slices.Contains(specs, "task__start") {
+		return specs
+	}
+	out := slices.Clone(specs)
+	for _, name := range irc.TaskToolset {
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }

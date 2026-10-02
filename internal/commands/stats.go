@@ -24,10 +24,15 @@ func (c *StatsCommand) AdminOnly() bool { return false }
 func (c *StatsCommand) Execute(ctx irc.ChatContextInterface) {
 	session := ctx.GetSession()
 	history := session.GetHistory()
-	metadata := session.GetMetadata()
 
-	// Get capacity percentage using the interface method
-	percentage := session.GetCapacityPercentage()
+	// History size by its text, the same measure the recap folder uses.
+	historySize := 0
+	for _, msg := range history {
+		if msg.Role != messages.MessageRoleSystem {
+			historySize += sessions.EstimateTokens(msg)
+		}
+	}
+	maxContext := ctx.GetConfig().Session.MaxContext
 
 	// Calculate token breakdown
 	totalInputTokens := 0
@@ -71,22 +76,15 @@ func (c *StatsCommand) Execute(ctx irc.ChatContextInterface) {
 	// Get message counts and tool calls using new interface methods
 	messageCounts := session.GetMessageCounts()
 
-	// Calculate TTL information
-	ttlStr := "unlimited"
-	if metadata.TTL > 0 {
-		timeRemaining := session.GetTimeToExpiry()
-
-		if timeRemaining > 0 {
-			ttlStr = fmt.Sprintf("expires in %s", formatDuration(timeRemaining))
-		} else {
-			ttlStr = "expired"
-		}
+	// Idle conversations are folded into the recap, not expired.
+	ttlStr := "never folded"
+	if idle := ctx.GetConfig().Session.TTL; idle > 0 {
+		ttlStr = fmt.Sprintf("recap after %s idle", formatDuration(idle))
 	}
 
-	// Format capacity
-	capacityStr := "unlimited"
-	if metadata.MaxHistoryTokens > 0 {
-		capacityStr = fmt.Sprintf("%.1f%% of %d", percentage, metadata.MaxHistoryTokens)
+	capacityStr := fmt.Sprintf("~%d tokens", historySize)
+	if maxContext > 0 {
+		capacityStr = fmt.Sprintf("%.1f%% of %d", float64(historySize)*100/float64(maxContext), maxContext)
 	}
 
 	// Build response in simple format

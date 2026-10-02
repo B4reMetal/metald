@@ -5,6 +5,7 @@
 package testing
 
 import (
+	"sync"
 	"time"
 
 	"github.com/alexschlessinger/pollytool/llm"
@@ -20,10 +21,23 @@ type MockLLM struct {
 	Responses []string      // Chunks to send
 	Delay     time.Duration // Delay between chunks (0 = immediate)
 	Error     error         // Error to return (sent as final chunk)
+
+	mu   sync.Mutex
+	last *llm.CompletionRequest
+}
+
+// LastRequest returns the most recent request the mock was sent.
+func (m *MockLLM) LastRequest() *llm.CompletionRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.last
 }
 
 // ChatCompletionStream implements core.LLM
 func (m *MockLLM) ChatCompletionStream(ctx core.ChatContextInterface, req *llm.CompletionRequest) <-chan string {
+	m.mu.Lock()
+	m.last = req
+	m.mu.Unlock()
 	ch := make(chan string, len(m.Responses)+1)
 	go func() {
 		defer close(ch)

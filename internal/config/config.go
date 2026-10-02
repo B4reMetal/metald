@@ -84,6 +84,13 @@ type BotConfig struct {
 	DataDir string
 	// MaxConcurrent is how many requests may run at once, across all networks.
 	MaxConcurrent int
+	// AdminListen and AdminToken serve the operator page; it stays off unless both are set.
+	AdminListen string
+	AdminToken  string
+	// Sign-in through an auth proxy instead of the token; see admin.Config.
+	AdminTrustedProxies []string
+	AdminUsers          []string
+	AdminUserHeader     string
 	// PluginLib is put on PYTHONPATH so tools can import metald_tools.
 	PluginLib     string
 	CommandPrefix string
@@ -96,6 +103,17 @@ type BotConfig struct {
 	ReplyScreenPolicy  string
 	MemoryPolicy       string
 	MemoryFrame        string
+	RecapPrompt        string
+	RecapFrame         string
+	BacklogFrame       string
+	RelevantFrame      string
+	ToolRetryNote      string
+	EmptyReplyNote     string
+	TaskPrompt         string
+	GoalPrompt         string
+	GoalRoundPrompt    string
+	GoalVerifyPrompt   string
+	DelegatePrompt     string
 }
 
 type ModelConfig struct {
@@ -108,9 +126,25 @@ type ModelConfig struct {
 }
 
 type SessionConfig struct {
-	ChunkMax   int
-	MaxContext int
-	TTL        time.Duration
+	ChunkMax      int
+	MaxContext    int
+	TTL           time.Duration
+	Backlog       int           // unaddressed channel lines handed to the next request; 0 = off
+	BacklogWindow time.Duration // how far back those lines may reach
+	RecapMax      int           // character limit of a channel recap
+	HistoryDays   int           // days of chat kept searchable; 0 = no chat log
+	MaxIterations int           // model calls one request may make, tool rounds included
+
+	TaskMaxTime       time.Duration // wall clock for one background task
+	TaskMaxIterations int           // model calls one background task may make
+	TaskMaxTokens     int           // output one model call in background work may produce
+	TaskDailyLimit    int           // background tasks a non-admin may start per day; 0 = none
+	TaskMaxActive     int           // queued or running tasks a non-admin may have at once
+
+	GoalMaxRuns        int           // rounds a goal may take
+	GoalMaxTime        time.Duration // total time a goal's rounds may take
+	GoalDeadline       time.Duration // how long after it starts a goal must be done
+	GoalUpdateInterval time.Duration // least time between a goal's progress lines in the channel
 }
 
 type APIConfig struct {
@@ -237,6 +271,11 @@ func GetFlags() []cli.Flag {
 		// No defaults: the shipped text is in examples/chatbot.yml and the bot
 		// refuses to start if any of these is empty.
 		&cli.IntFlag{Name: "maxconcurrent", Value: 3, Usage: "requests handled at once across all networks (1 = strictly one at a time)", Sources: src("maxconcurrent", "METALD_MAXCONCURRENT")},
+		&cli.StringFlag{Name: "adminlisten", Usage: "address for the operator page, e.g. 127.0.0.1:8766 (empty = off)", Sources: src("adminlisten", "METALD_ADMINLISTEN")},
+		&cli.StringFlag{Name: "admintoken", Usage: "bearer token the operator page requires (empty = page off)", Sources: src("admintoken", "METALD_ADMINTOKEN")},
+		&cli.StringSliceFlag{Name: "admintrustedproxies", Usage: "auth proxy addresses or ranges whose user header the operator page believes", Sources: src("admintrustedproxies", "METALD_ADMINTRUSTEDPROXIES")},
+		&cli.StringSliceFlag{Name: "adminusers", Usage: "users the auth proxy may sign in to the operator page (empty = none)", Sources: src("adminusers", "METALD_ADMINUSERS")},
+		&cli.StringFlag{Name: "adminuserheader", Value: "X-Authentik-Username", Usage: "request header carrying the auth proxy's signed-in user", Sources: src("adminuserheader", "METALD_ADMINUSERHEADER")},
 		&cli.StringFlag{Name: "commandprefix", Value: "+", Usage: "what starts a command, e.g. + or ! (punctuation only)", Sources: src("commandprefix", "METALD_COMMANDPREFIX")},
 		&cli.StringFlag{Name: "pluginlib", Value: "plugins/lib", Usage: "shared Python library for tools, added to PYTHONPATH", Sources: src("pluginlib", "METALD_PLUGINLIB")},
 		&cli.StringFlag{Name: "datadir", Value: ".", Usage: "directory for runtime state (memories, reminders, ignores, overrides)", Sources: src("datadir", "METALD_DATADIR")},
@@ -247,6 +286,17 @@ func GetFlags() []cli.Flag {
 		&cli.StringFlag{Name: "replyscreenpolicy", Usage: "policy the outbound reply classifier enforces for filtered nicks (required)", Sources: src("replyscreenpolicy", "METALD_REPLYSCREENPOLICY")},
 		&cli.StringFlag{Name: "memoryframe", Usage: "text introducing what the bot remembers about the speaker; {nick} is replaced (required)", Sources: src("memoryframe", "METALD_MEMORYFRAME")},
 		&cli.StringFlag{Name: "memorypolicy", Usage: "policy checked before a fact is written to memory (required)", Sources: src("memorypolicy", "METALD_MEMORYPOLICY")},
+		&cli.StringFlag{Name: "recapprompt", Usage: "instructions for folding older conversation into the channel recap (required)", Sources: src("recapprompt", "METALD_RECAPPROMPT")},
+		&cli.StringFlag{Name: "recapframe", Usage: "text introducing the channel recap to the model (required)", Sources: src("recapframe", "METALD_RECAPFRAME")},
+		&cli.StringFlag{Name: "backlogframe", Usage: "text introducing recent channel lines the bot was not addressed in (required)", Sources: src("backlogframe", "METALD_BACKLOGFRAME")},
+		&cli.StringFlag{Name: "taskprompt", Usage: "added to the system prompt when the bot works on a background task (required)", Sources: src("taskprompt", "METALD_TASKPROMPT")},
+		&cli.StringFlag{Name: "goalprompt", Usage: "first round of a goal; {objective}, {criteria}, {rounds} are replaced (required)", Sources: src("goalprompt", "METALD_GOALPROMPT")},
+		&cli.StringFlag{Name: "goalroundprompt", Usage: "later rounds of a goal; {round}, {rounds}, {feedback}, {todo}, {notes} are replaced (required)", Sources: src("goalroundprompt", "METALD_GOALROUNDPROMPT")},
+		&cli.StringFlag{Name: "delegateprompt", Usage: "added to the system prompt of a helper background work delegates a sub-question to (required)", Sources: src("delegateprompt", "METALD_DELEGATEPROMPT")},
+		&cli.StringFlag{Name: "goalverifyprompt", Usage: "instructions for the reviewer that decides whether a goal is done (required)", Sources: src("goalverifyprompt", "METALD_GOALVERIFYPROMPT")},
+		&cli.StringFlag{Name: "emptyreplynote", Usage: "sent to the model once when it finishes without writing a reply (required)", Sources: src("emptyreplynote", "METALD_EMPTYREPLYNOTE")},
+		&cli.StringFlag{Name: "toolretrynote", Usage: "sent to the model after it writes a tool call as text; {tools} is replaced by the exact tool names (required)", Sources: src("toolretrynote", "METALD_TOOLRETRYNOTE")},
+		&cli.StringFlag{Name: "relevantframe", Usage: "text introducing remembered facts related to the message (required)", Sources: src("relevantframe", "METALD_RELEVANTFRAME")},
 		&cli.DurationFlag{Name: "floodwindow", Value: 30 * time.Second, Usage: "sliding window for flood detection", Sources: src("floodwindow", "METALD_FLOODWINDOW")},
 		&cli.DurationFlag{Name: "floodtimeout", Value: 5 * time.Minute, Usage: "how long a flooding nick is auto-ignored", Sources: src("floodtimeout", "METALD_FLOODTIMEOUT")},
 
@@ -254,7 +304,21 @@ func GetFlags() []cli.Flag {
 		&cli.BoolFlag{Name: "addressed", Aliases: []string{"a"}, Value: true, Usage: "require bot be addressed by nick for response", Sources: src("addressed", "METALD_ADDRESSED")},
 		&cli.StringFlag{Name: "trigger", Usage: "word/phrase that activates the bot instead of its nick (default: bot's nick)", Sources: src("trigger", "METALD_TRIGGER")},
 		&cli.StringFlag{Name: "responseprefix", Usage: "prefix prepended to every response line (e.g. '[metalai]')", Sources: src("responseprefix", "METALD_RESPONSEPREFIX")},
-		&cli.DurationFlag{Name: "sessionduration", Aliases: []string{"S"}, Value: time.Minute * 10, Usage: "message context will be cleared after it is unused for this duration", Sources: src("sessionduration", "METALD_SESSIONDURATION")},
+		&cli.DurationFlag{Name: "sessionduration", Aliases: []string{"S"}, Value: time.Minute * 10, Usage: "after a conversation is idle this long, its older turns are folded into the channel recap", Sources: src("sessionduration", "METALD_SESSIONDURATION")},
+		&cli.IntFlag{Name: "channelbacklog", Value: 30, Usage: "recent unaddressed channel lines included with the next request (0 = off)", Sources: src("channelbacklog", "METALD_CHANNELBACKLOG")},
+		&cli.DurationFlag{Name: "channelbacklogwindow", Value: 20 * time.Minute, Usage: "how far back those channel lines may reach", Sources: src("channelbacklogwindow", "METALD_CHANNELBACKLOGWINDOW")},
+		&cli.IntFlag{Name: "recapmax", Value: 6000, Usage: "character limit of a channel recap", Sources: src("recapmax", "METALD_RECAPMAX")},
+		&cli.IntFlag{Name: "maxiterations", Value: 10, Usage: "model calls one request may make, tool rounds included", Sources: src("maxiterations", "METALD_MAXITERATIONS")},
+		&cli.DurationFlag{Name: "taskmaxtime", Value: 30 * time.Minute, Usage: "wall clock for one background task", Sources: src("taskmaxtime", "METALD_TASKMAXTIME")},
+		&cli.IntFlag{Name: "taskmaxtokens", Value: 65536, Usage: "output one model call in background work may produce, thinking included", Sources: src("taskmaxtokens", "METALD_TASKMAXTOKENS")},
+		&cli.IntFlag{Name: "taskmaxiterations", Value: 30, Usage: "model calls one background task may make", Sources: src("taskmaxiterations", "METALD_TASKMAXITERATIONS")},
+		&cli.IntFlag{Name: "taskdailylimit", Value: 3, Usage: "background tasks a non-admin may start per day (0 = only admins)", Sources: src("taskdailylimit", "METALD_TASKDAILYLIMIT")},
+		&cli.IntFlag{Name: "taskmaxactive", Value: 1, Usage: "queued or running background tasks a non-admin may have at once", Sources: src("taskmaxactive", "METALD_TASKMAXACTIVE")},
+		&cli.IntFlag{Name: "goalmaxruns", Value: 20, Usage: "rounds a goal may take", Sources: src("goalmaxruns", "METALD_GOALMAXRUNS")},
+		&cli.DurationFlag{Name: "goalmaxtime", Value: 60 * time.Minute, Usage: "total time a goal's rounds may take", Sources: src("goalmaxtime", "METALD_GOALMAXTIME")},
+		&cli.DurationFlag{Name: "goaldeadline", Value: 24 * time.Hour, Usage: "how long after it starts a goal must be done", Sources: src("goaldeadline", "METALD_GOALDEADLINE")},
+		&cli.DurationFlag{Name: "goalupdateinterval", Value: 5 * time.Minute, Usage: "least time between a goal's progress lines", Sources: src("goalupdateinterval", "METALD_GOALUPDATEINTERVAL")},
+		&cli.IntFlag{Name: "historydays", Value: 30, Usage: "days of chat kept searchable by history__search (0 = keep no chat log)", Sources: src("historydays", "METALD_HISTORYDAYS")},
 		&cli.IntFlag{Name: "maxcontext", Value: 0, Usage: "maximum token count for session history (0 = unlimited)", Sources: src("maxcontext", "METALD_MAXCONTEXT")},
 		&cli.IntFlag{Name: "chunkmax", Aliases: []string{"m"}, Value: 350, Usage: "maximum number of characters to send as a single message", Sources: src("chunkmax", "METALD_CHUNKMAX")},
 
@@ -323,6 +387,20 @@ func (c *Configuration) PrintConfig() {
 		{"sandbox", fmt.Sprintf("%t", c.Bot.Sandbox)},
 		{"ignoreprivate", fmt.Sprintf("%t", c.Bot.IgnorePrivate)},
 		{"sessionduration", c.Session.TTL.String()},
+		{"channelbacklog", fmt.Sprintf("%d", c.Session.Backlog)},
+		{"channelbacklogwindow", c.Session.BacklogWindow.String()},
+		{"recapmax", fmt.Sprintf("%d", c.Session.RecapMax)},
+		{"historydays", fmt.Sprintf("%d", c.Session.HistoryDays)},
+		{"maxiterations", fmt.Sprintf("%d", c.Session.MaxIterations)},
+		{"taskmaxtime", c.Session.TaskMaxTime.String()},
+		{"taskmaxiterations", fmt.Sprintf("%d", c.Session.TaskMaxIterations)},
+		{"taskmaxtokens", fmt.Sprintf("%d", c.Session.TaskMaxTokens)},
+		{"taskdailylimit", fmt.Sprintf("%d", c.Session.TaskDailyLimit)},
+		{"taskmaxactive", fmt.Sprintf("%d", c.Session.TaskMaxActive)},
+		{"goalmaxruns", fmt.Sprintf("%d", c.Session.GoalMaxRuns)},
+		{"goalmaxtime", c.Session.GoalMaxTime.String()},
+		{"goaldeadline", c.Session.GoalDeadline.String()},
+		{"goalupdateinterval", c.Session.GoalUpdateInterval.String()},
 		{"openaikey", mask(c.API.OpenAIKey)},
 		{"anthropickey", mask(c.API.AnthropicKey)},
 		{"geminikey", mask(c.API.GeminiKey)},
@@ -372,43 +450,59 @@ func NewConfiguration(c *cli.Command) *Configuration {
 			ServerPass:  c.String("serverpass"),
 		},
 		Bot: &BotConfig{
-			Admins:             c.StringSlice("admins"),
-			Verbose:            c.Bool("verbose"),
-			LogLevel:           c.String("loglevel"),
-			LogFormat:          c.String("logformat"),
-			Addressed:          c.Bool("addressed"),
-			Trigger:            c.String("trigger"),
-			ResponsePrefix:     c.String("responseprefix"),
-			Prompt:             c.String("prompt"),
-			Greeting:           c.String("greeting"),
-			OpWatcher:          c.Bool("opwatcher"),
-			OpWatcherTemplate:  c.String("opwatchertemplate"),
-			Tools:              c.StringSlice("tool"),
-			AdminTools:         c.StringSlice("admintools"),
-			ShowThinkingAction: c.Bool("showthinkingaction"),
-			ShowToolActions:    c.Bool("showtoolactions"),
-			URLWatcher:         c.Bool("urlwatcher"),
-			URLWatcherSilent:   c.Bool("urlwatchersilent"),
-			Sandbox:            c.Bool("sandbox"),
-			IgnorePrivate:      c.Bool("ignoreprivate"),
-			FloodMessages:      c.Int("floodmessages"),
-			ScreenNicks:        c.StringSlice("screennicks"),
-			ScreenRefusal:      c.String("screenrefusal"),
-			FilterNicks:        c.StringSlice("filternicks"),
-			PromptFloor:        c.Bool("promptfloor"),
-			DataDir:            c.String("datadir"),
-			MaxConcurrent:      int(c.Int("maxconcurrent")),
-			PluginLib:          c.String("pluginlib"),
-			CommandPrefix:      c.String("commandprefix"),
-			FloorPrompt:        c.String("floorprompt"),
-			GatekeeperPreamble: c.String("gatekeeperpreamble"),
-			GatekeeperPolicy:   c.String("gatekeeperpolicy"),
-			ClassifyPreamble:   c.String("classifypreamble"),
-			ReplyScreenPolicy:  c.String("replyscreenpolicy"),
-			MemoryPolicy:       c.String("memorypolicy"),
-			MemoryFrame:        c.String("memoryframe"),
-			FloodWindow:        c.Duration("floodwindow"),
-			FloodTimeout:       c.Duration("floodtimeout"),
+			Admins:              c.StringSlice("admins"),
+			Verbose:             c.Bool("verbose"),
+			LogLevel:            c.String("loglevel"),
+			LogFormat:           c.String("logformat"),
+			Addressed:           c.Bool("addressed"),
+			Trigger:             c.String("trigger"),
+			ResponsePrefix:      c.String("responseprefix"),
+			Prompt:              c.String("prompt"),
+			Greeting:            c.String("greeting"),
+			OpWatcher:           c.Bool("opwatcher"),
+			OpWatcherTemplate:   c.String("opwatchertemplate"),
+			Tools:               c.StringSlice("tool"),
+			AdminTools:          c.StringSlice("admintools"),
+			ShowThinkingAction:  c.Bool("showthinkingaction"),
+			ShowToolActions:     c.Bool("showtoolactions"),
+			URLWatcher:          c.Bool("urlwatcher"),
+			URLWatcherSilent:    c.Bool("urlwatchersilent"),
+			Sandbox:             c.Bool("sandbox"),
+			IgnorePrivate:       c.Bool("ignoreprivate"),
+			FloodMessages:       c.Int("floodmessages"),
+			ScreenNicks:         c.StringSlice("screennicks"),
+			ScreenRefusal:       c.String("screenrefusal"),
+			FilterNicks:         c.StringSlice("filternicks"),
+			PromptFloor:         c.Bool("promptfloor"),
+			DataDir:             c.String("datadir"),
+			MaxConcurrent:       int(c.Int("maxconcurrent")),
+			AdminListen:         c.String("adminlisten"),
+			AdminToken:          c.String("admintoken"),
+			AdminTrustedProxies: c.StringSlice("admintrustedproxies"),
+			AdminUsers:          c.StringSlice("adminusers"),
+			AdminUserHeader:     c.String("adminuserheader"),
+			PluginLib:           c.String("pluginlib"),
+			CommandPrefix:       c.String("commandprefix"),
+			FloorPrompt:         c.String("floorprompt"),
+			GatekeeperPreamble:  c.String("gatekeeperpreamble"),
+			GatekeeperPolicy:    c.String("gatekeeperpolicy"),
+			ClassifyPreamble:    c.String("classifypreamble"),
+			ReplyScreenPolicy:   c.String("replyscreenpolicy"),
+			MemoryPolicy:        c.String("memorypolicy"),
+			MemoryFrame:         c.String("memoryframe"),
+			RecapPrompt:         c.String("recapprompt"),
+			RecapFrame:          c.String("recapframe"),
+			BacklogFrame:        c.String("backlogframe"),
+			RelevantFrame:       c.String("relevantframe"),
+			ToolRetryNote:       c.String("toolretrynote"),
+			EmptyReplyNote:      c.String("emptyreplynote"),
+			TaskPrompt:          c.String("taskprompt"),
+			GoalPrompt:          c.String("goalprompt"),
+			GoalRoundPrompt:     c.String("goalroundprompt"),
+			GoalVerifyPrompt:    c.String("goalverifyprompt"),
+			DelegatePrompt:      c.String("delegateprompt"),
+			FloodWindow:         c.Duration("floodwindow"),
+			FloodTimeout:        c.Duration("floodtimeout"),
 		},
 		Model: &ModelConfig{
 			Model:          c.String("model"),
@@ -420,9 +514,25 @@ func NewConfiguration(c *cli.Command) *Configuration {
 		},
 
 		Session: &SessionConfig{
-			ChunkMax:   c.Int("chunkmax"),
-			MaxContext: c.Int("maxcontext"),
-			TTL:        c.Duration("sessionduration"),
+			ChunkMax:      c.Int("chunkmax"),
+			MaxContext:    c.Int("maxcontext"),
+			TTL:           c.Duration("sessionduration"),
+			Backlog:       c.Int("channelbacklog"),
+			BacklogWindow: c.Duration("channelbacklogwindow"),
+			RecapMax:      c.Int("recapmax"),
+			HistoryDays:   c.Int("historydays"),
+			MaxIterations: c.Int("maxiterations"),
+
+			TaskMaxTime:       c.Duration("taskmaxtime"),
+			TaskMaxIterations: c.Int("taskmaxiterations"),
+			TaskMaxTokens:     c.Int("taskmaxtokens"),
+			TaskDailyLimit:    c.Int("taskdailylimit"),
+			TaskMaxActive:     c.Int("taskmaxactive"),
+
+			GoalMaxRuns:        c.Int("goalmaxruns"),
+			GoalMaxTime:        c.Duration("goalmaxtime"),
+			GoalDeadline:       c.Duration("goaldeadline"),
+			GoalUpdateInterval: c.Duration("goalupdateinterval"),
 		},
 
 		API: &APIConfig{

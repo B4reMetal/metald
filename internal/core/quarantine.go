@@ -73,5 +73,9 @@ func QuarantineSpeaker(session sessions.Session, nick string) int {
 	for _, m := range keep {
 		session.AddMessage(m)
 	}
+	// The recap may already carry what they said; it goes too, rather than be picked apart.
+	if db, err := Context(); err == nil {
+		db.ClearRecap(session.GetName())
+	}
 	return dropped
 }

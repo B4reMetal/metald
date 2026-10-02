@@ -381,3 +381,72 @@ func TestDrainQueuedEmptiesBacklog(t *testing.T) {
 		t.Errorf("draining an empty channel returned %d", n)
 	}
 }
+
+func TestToolAction(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{"action: slaps bob around a bit with a large trout\nposted.", "slaps bob around a bit with a large trout", true},
+		{"action:   waves  ", "waves", true},
+		{"action: evil\x01\x07 bell", "evil bell", true},
+		{"action: ", "", false},
+		{"url: https://example.com/x.png", "", false},
+		{"nothing here", "", false},
+		{"text first\naction: not on the first line", "", false},
+	} {
+		got, ok := toolAction(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("toolAction(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+	long := "action: " + strings.Repeat("x", 500)
+	if got, _ := toolAction(long); len(got) != maxToolAction {
+		t.Errorf("not capped: %d", len(got))
+	}
+}
+
+func TestReplyLinesRestatingAPostedActionAreDropped(t *testing.T) {
+	ctx := mocktest.NewMockContext()
+	recordAction(ctx.GetRequestID(), "slaps alice around a bit with a 4090")
+	for line, want := range map[string]bool{
+		"*[slaps alice with a 4090]*":                        true,
+		"*you slap alice around a bit with a 4090*":          true,
+		"slaps alice around a bit with a 4090, as requested": true,
+		"that's for making me run on a 4090 with no fans":    false,
+		"GPU tax.":                      false,
+		"slaps back":                    false,
+		"alice had it coming, honestly": false,
+	} {
+		if got := echoesAction(ctx, line); got != want {
+			t.Errorf("echoesAction(%q) = %v, want %v", line, got, want)
+		}
+	}
+	postedActions.Delete(ctx.GetRequestID())
+	if echoesAction(ctx, "*[slaps alice with a 4090]*") {
+		t.Error("once the request is over nothing is filtered")
+	}
+}
+
+func TestDividerLine(t *testing.T) {
+	for line, want := range map[string]bool{
+		"* * *": true, "---": true, "  ___  ": true, "#": true,
+		"?": false, "...": false, "": false, "- item": false, "*shrug*": false,
+	} {
+		if got := dividerLine(line); got != want {
+			t.Errorf("dividerLine(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// A call to a name that is not a registered tool fails, so it is not announced.
+func TestOnToolStart_UnknownToolIsNotAnnounced(t *testing.T) {
+	ctx := mocktest.NewMockContext().WithSystem(mocktest.NewMockSystem())
+	cfg := ctx.GetConfig()
+	cfg.Bot.ShowToolActions = true
+	h := newCallbackHandler(ctx, irc.NewChunker(make(chan string, 10), 350), cfg)
+	h.onToolStart([]messages.ChatMessageToolCall{{Name: "slap"}})
+	if len(ctx.Actions) != 0 {
+		t.Fatalf("unknown tool announced: %v", ctx.Actions)
+	}
+}

@@ -44,6 +44,7 @@ type Reminder struct {
 // ReminderStore holds pending reminders, persisted to disk.
 type ReminderStore struct {
 	mu      sync.RWMutex
+	saveMu  sync.Mutex // parallel saves shared one temp file, so one rename found it gone
 	path    string
 	entries map[string]Reminder // id -> reminder
 }
@@ -105,6 +106,7 @@ func (s *ReminderStore) Add(network, nick, channel, text, setBy string, d time.D
 
 	r := Reminder{
 		ID:      newReminderID(),
+		Network: network,
 		Nick:    strings.TrimSpace(nick),
 		Channel: channel,
 		Text:    strings.TrimSpace(text),
@@ -177,6 +179,24 @@ func (s *ReminderStore) PopDue(now time.Time, network string) (due []Reminder, s
 	return due, stale
 }
 
+// AdoptUnscopedReminders assigns reminders saved without a network to network, so they fire.
+func (s *ReminderStore) AdoptUnscopedReminders(network string) int {
+	s.mu.Lock()
+	n := 0
+	for id, r := range s.entries {
+		if r.Network == "" {
+			r.Network = network
+			s.entries[id] = r
+			n++
+		}
+	}
+	s.mu.Unlock()
+	if n > 0 {
+		s.save()
+	}
+	return n
+}
+
 func newReminderID() string {
 	b := make([]byte, 3)
 	rand.Read(b)
@@ -203,6 +223,8 @@ func (s *ReminderStore) load() {
 // save writes state atomically (temp file + rename) so a crash mid-write
 // can't truncate the file and lose every pending reminder.
 func (s *ReminderStore) save() {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 	s.mu.RLock()
 	snapshot := make(map[string]Reminder, len(s.entries))
 	for id, r := range s.entries {

@@ -162,16 +162,53 @@ func repairUnclosedColor(s string) string {
 }
 
 func convertMarkdownEmphasis(re *regexp.Regexp, tag, s string) string {
-	return re.ReplaceAllStringFunc(s, func(m string) string {
-		sub := re.FindStringSubmatch(m)
-		open, body, close := sub[1], sub[2], sub[3]
+	var b strings.Builder
+	last := 0
+	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+		open, body, close := group(s, m, 1), group(s, m, 2), group(s, m, 3)
+		starStart, starEnd := m[0]+len(open), m[1]-len(close)
+		if !emphasisFlanks(s, starStart, starEnd, body) {
+			continue
+		}
+		b.WriteString(s[last:m[0]])
 		if open == "" || close == "" {
 			// Not a genuine matched pair - keep whichever bracket showed up,
 			// it wasn't part of the emphasis wrapping.
-			return open + "[" + tag + "]" + body + "[/" + tag + "]" + close
+			b.WriteString(open + "[" + tag + "]" + body + "[/" + tag + "]" + close)
+		} else {
+			b.WriteString("[" + tag + "]" + body + "[/" + tag + "]")
 		}
-		return "[" + tag + "]" + body + "[/" + tag + "]"
-	})
+		last = m[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+func group(s string, m []int, i int) string {
+	if m[2*i] < 0 {
+		return ""
+	}
+	return s[m[2*i]:m[2*i+1]]
+}
+
+// emphasisFlanks applies markdown's rule for "*x*" to the stars at s[start:end]: they must not be
+// glued to a letter or digit outside, and the text inside must not start or end with a space. So
+// "*really*" is emphasis while "a*b*c" and "y * z * w" are arithmetic.
+func emphasisFlanks(s string, start, end int, body string) bool {
+	if strings.TrimSpace(body) != body {
+		return false
+	}
+	if start > 0 && (isWordByte(s[start-1]) || s[start-1] == '*') {
+		return false
+	}
+	if end < len(s) && (isWordByte(s[end]) || s[end] == '*') {
+		return false
+	}
+	return true
+}
+
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func repairMalformedTags(s string) string {
@@ -213,6 +250,41 @@ func repairMalformedTags(s string) string {
 // RenderIRCFormatting converts [b]/[i]/[u]/[color=name] tags into real IRC formatting control
 // codes.
 func RenderIRCFormatting(s string) string {
+	s = protectCodeIndexes(s)
+	s = renderTags(s)
+	return strings.ReplaceAll(s, indexBracket, "[")
+}
+
+// indexBracket stands in for the "[" of a code index while tags are rendered.
+const indexBracket = "\uE000"
+
+// openTag matches an opening "[i]", "[b]" or "[u]".
+var openTag = regexp.MustCompile(`\[([biuBIU])\]`)
+
+// protectCodeIndexes hides the "[" of array indexes like s[i] from the tag renderer: an opening tag
+// written straight after a name, digit, "]" or ")" is an index unless its closing tag follows.
+func protectCodeIndexes(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range openTag.FindAllStringSubmatchIndex(s, -1) {
+		if m[0] == 0 {
+			continue
+		}
+		if c := s[m[0]-1]; !isWordByte(c) && c != ']' && c != ')' {
+			continue
+		}
+		if strings.Contains(strings.ToLower(s[m[1]:]), "[/"+strings.ToLower(s[m[2]:m[3]])+"]") {
+			continue
+		}
+		b.WriteString(s[last:m[0]])
+		b.WriteString(indexBracket)
+		last = m[0] + 1
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+func renderTags(s string) string {
 	s = repairMalformedTags(s)
 	s = tagColor.ReplaceAllStringFunc(s, func(m string) string {
 		sub := tagColor.FindStringSubmatch(m)

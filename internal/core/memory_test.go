@@ -300,3 +300,72 @@ func TestAdoptUnscopedMemories(t *testing.T) {
 		t.Errorf("migration is not idempotent, re-stamped %d rows", again)
 	}
 }
+
+// A message that names someone pulls in what the bot knows about them; one about a topic pulls in
+// matching facts. The speaker's own facts and other networks' facts stay out.
+func TestRelevantMemories(t *testing.T) {
+	s := testStore(t)
+	_, _ = s.Remember("net", "carol", "is building a cnc router", "carol", "#chat")
+	_, _ = s.Remember("net", "bob", "hates accordion music", "bob", "#chat")
+	_, _ = s.Remember("net", "dave", "plays the accordion badly", "dave", "#chat")
+	_, _ = s.Remember("other", "carol", "lives on another network", "x", "#x")
+
+	got, err := s.Relevant("net", "has anyone seen carol lately?", []string{"dave"}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Subject != "carol" || got[0].Network != "net" {
+		t.Fatalf("named subject: %+v", got)
+	}
+
+	got, _ = s.Relevant("net", "play me some accordion music", []string{"dave"}, 8)
+	if len(got) != 1 || got[0].Subject != "bob" {
+		t.Errorf("topic match should find bob's fact and skip the speaker's: %+v", got)
+	}
+
+	if got, _ := s.Relevant("net", "", []string{"dave"}, 8); len(got) != 0 {
+		t.Errorf("empty text: %+v", got)
+	}
+}
+
+// A database created before the search index existed gets its facts indexed on open.
+func TestSearchIndexBuiltForExistingMemories(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memories.db")
+	s, err := OpenMemoryStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.Remember("net", "bob", "collects vintage synthesizers", "bob", "#chat")
+	if _, err := s.db.Exec(`DROP TABLE memories_fts; DROP TRIGGER memories_ai; DROP TRIGGER memories_ad; DROP TRIGGER memories_au;`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = OpenMemoryStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, _ := s.Relevant("net", "any synthesizers here?", nil, 5)
+	if len(got) != 1 {
+		t.Errorf("old fact not indexed: %+v", got)
+	}
+}
+
+// The bot's own name is in every addressed message; it must not pull in the bot's lore each time,
+// and one short shared word is not relevance.
+func TestRelevantIgnoresTriggerAndWeakMatches(t *testing.T) {
+	s := testStore(t)
+	_, _ = s.Remember("net", "metalai", "is secretly a robot in the party bit", "bob", "#chat")
+	_, _ = s.Remember("net", "carol", "now has stubble and works out", "carol", "#chat")
+	_, _ = s.Remember("net", "eve", "collects vintage synthesizers", "eve", "#chat")
+
+	got, _ := s.Relevant("net", "metalai now do a chip-8 emulator", []string{"dave", "metalai"}, 5)
+	if len(got) != 0 {
+		t.Errorf("irrelevant facts injected: %+v", got)
+	}
+	got, _ = s.Relevant("net", "metalai what synthesizers are good for ambient?", []string{"dave", "metalai"}, 5)
+	if len(got) != 1 || got[0].Subject != "eve" {
+		t.Errorf("distinctive word match missed: %+v", got)
+	}
+}

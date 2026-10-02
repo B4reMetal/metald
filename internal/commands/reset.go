@@ -69,6 +69,8 @@ func (c *ResetCommand) Execute(ctx irc.ChatContextInterface) {
 	personaCleared := restoreOperatorPrompt(ctx)
 
 	ctx.GetSession().Clear()
+	// The channel recap survives: it can hold days of context, and only an admin clears it (+recap).
+	core.Backlog().Clear(ctx.GetSession().GetName())
 
 	// Back to the default model as well as a clean history, so one command
 	// returns the bot to a known-good state.

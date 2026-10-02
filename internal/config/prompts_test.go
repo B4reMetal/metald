@@ -17,6 +17,8 @@ func fullBot() *BotConfig {
 	return &BotConfig{
 		FloorPrompt: "a", GatekeeperPreamble: "b", GatekeeperPolicy: "c",
 		ClassifyPreamble: "d", ReplyScreenPolicy: "e", MemoryPolicy: "f", MemoryFrame: "g",
+		RecapPrompt: "h", RecapFrame: "i", BacklogFrame: "j", RelevantFrame: "k", ToolRetryNote: "l", EmptyReplyNote: "m", TaskPrompt: "n",
+		GoalPrompt: "o", GoalRoundPrompt: "p", GoalVerifyPrompt: "q", DelegatePrompt: "r",
 	}
 }
 

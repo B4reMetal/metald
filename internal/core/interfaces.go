@@ -25,6 +25,8 @@ type ChatContextInterface interface {
 	IsPrivate() bool
 	GetCommand() string
 	GetSource() string
+	GetSourceMask() string // the sender's full nick!user@host
+	GetTarget() string     // where the message was sent: the channel, or the bot's nick for a PM
 	GetRequestID() string
 	GetArgs() []string
 

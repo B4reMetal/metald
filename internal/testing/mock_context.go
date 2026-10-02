@@ -297,6 +297,15 @@ func (m *MockChatContext) GetNetwork() string {
 	return ""
 }
 
+func (m *MockChatContext) GetSourceMask() string { return m.Source + "!~u@test.host" }
+
+func (m *MockChatContext) GetTarget() string {
+	if m.Private {
+		return m.BotNick
+	}
+	return "#test"
+}
+
 func (m *MockChatContext) GetBotNick() string {
 	return m.BotNick
 }

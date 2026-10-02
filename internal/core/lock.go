@@ -161,6 +161,13 @@ func WithRequestLock(ctx context.Context, key string, operation string, onSucces
 		logger = GetLogger()
 	}
 
+	source := ""
+	if src, ok := ctx.(interface{ GetSource() string }); ok {
+		source = src.GetSource()
+	}
+	id := trackInflight(key, operation, source)
+	defer untrackInflight(id)
+
 	logger.Debug("lock_acquiring", "lock_key", key, "operation", operation)
 	if !lock.LockWithContext(ctx) {
 		logger.Warn("lock_timeout", "lock_key", key, "operation", operation)
@@ -186,6 +193,7 @@ func WithRequestLock(ctx context.Context, key string, operation string, onSucces
 	}
 	defer globalGate.Unlock()
 
+	markRunning(id)
 	onSuccess()
 }
 

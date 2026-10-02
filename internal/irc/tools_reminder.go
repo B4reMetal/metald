@@ -54,6 +54,11 @@ func newIrcRemindTool() tools.Tool {
 				return "", fmt.Errorf("text must be a non-empty string")
 			}
 
+			if wakesBot(chatCtx, nick, text) {
+				return "Refused: a reminder can't address you; you'd answer your own message. " +
+					"Remind a person instead.", nil
+			}
+
 			minutes := args.Int("minutes", 0)
 			d := time.Duration(minutes) * time.Minute
 
@@ -88,6 +93,16 @@ func newIrcRemindTool() tools.Tool {
 				r.ID, r.Nick, minutes, r.Due.UTC().Format("15:04")), nil
 		},
 	}
+}
+
+// wakesBot reports whether the posted reminder would trigger the bot, which lets a reminder re-arm itself in a loop.
+// The bot's own nick alone is fine: with a trigger set, the bot may share a nick with its operator.
+func wakesBot(ctx ChatContextInterface, nick, text string) bool {
+	trigger := ctx.GetConfig().Bot.Trigger
+	if trigger == "" {
+		trigger = ctx.GetBotNick()
+	}
+	return CheckAddressed(nick+": "+text, trigger)
 }
 
 // newIrcRemindersTool lets the bot answer "what reminders are pending" and

@@ -22,7 +22,7 @@ import (
 
 // PollyLLM wraps pollytool's MultiPass and Agent to implement metald's LLM interface
 type PollyLLM struct {
-	client *llm.MultiPass
+	client llm.LLM
 }
 
 // NewPollyLLM creates a new pollytool-based LLM client
@@ -33,7 +33,7 @@ func NewPollyLLM(config config.APIConfig) *PollyLLM {
 		"gemini":    config.GeminiKey,
 		"ollama":    config.OllamaKey,
 	}
-	return &PollyLLM{client: llm.NewMultiPass(apiKeys)}
+	return &PollyLLM{client: stableToolOrder{llm.NewMultiPass(apiKeys)}}
 }
 
 // ChatCompletionStream returns a channel of string chunks for IRC output
@@ -56,14 +56,18 @@ func (p *PollyLLM) ChatCompletionStream(chatCtx core.ChatContextInterface, req *
 
 		// A nil registry is what denies tools under a custom prompt: the model is never told they
 		// exist, and a tool call emitted from memory cannot resolve.
-		registry := chatCtx.GetSystem().GetToolRegistry()
+		registry := toolView(chatCtx.GetSystem().GetToolRegistry(), scopeOf(chatCtx.GetSession().GetName()))
 		if core.Prompts().Active(chatCtx.GetLockKey()) {
 			registry = nil
 			chatCtx.GetLogger().Debug("tool_registry_withheld_custom_prompt")
 		}
 
+		iterations := cfg.Session.MaxIterations
+		if iterations <= 0 {
+			iterations = 10
+		}
 		agent := llm.NewAgent(p.client, registry, llm.AgentConfig{
-			MaxIterations: 10,
+			MaxIterations: iterations,
 			ToolTimeout:   cfg.API.Timeout,
 		})
 
@@ -72,11 +76,54 @@ func (p *PollyLLM) ChatCompletionStream(chatCtx core.ChatContextInterface, req *
 
 		resp, err := agent.Run(chatCtx, req, cb.build())
 
+		// A tool call written as text never ran: ask once more, telling the model the exact tool
+		// names. Only when no tool has run yet, so a retry cannot repeat one. The note is not
+		// committed; only the retry's answer is.
+		retried := false
+		if err == nil && cb.leaked && cb.toolCount == 0 && registry != nil && chatCtx.Err() == nil {
+			retried = true
+			chatCtx.GetLogger().Warn("tool_syntax_retry")
+			retry := *req
+			retry.Messages = append(append([]messages.ChatMessage(nil), req.Messages...), messages.ChatMessage{
+				Role:    messages.MessageRoleUser,
+				Content: toolRetryNote(cfg.Bot.ToolRetryNote, registry),
+			})
+			cb = newCallbackHandler(chatCtx, chunker, cfg)
+			resp, err = agent.Run(chatCtx, &retry, cb.build())
+		}
+
+		// A turn that ended with nothing to show - no text, no tool, no link - usually thought itself
+		// out and never wrote the answer. Ask once for the answer itself.
+		if err == nil && cb.silent() && !retried && chatCtx.Err() == nil {
+			retried = true
+			chatCtx.GetLogger().Warn("empty_reply_retry")
+			retry := *req
+			retry.Messages = append(append([]messages.ChatMessage(nil), req.Messages...), messages.ChatMessage{
+				Role:    messages.MessageRoleUser,
+				Content: strings.TrimSpace(cfg.Bot.EmptyReplyNote),
+			})
+			cb = newCallbackHandler(chatCtx, chunker, cfg)
+			resp, err = agent.Run(chatCtx, &retry, cb.build())
+		}
+
 		// Flush only if this request is still wanted.
 		if err := chatCtx.Err(); errors.Is(err, context.Canceled) {
 			// Cancelled (+reset, an ignore): the exchange never happened.
 			takePending(req)
 			chatCtx.GetLogger().Debug("output_discarded_cancelled")
+			return
+		}
+
+		// Out of iterations is not a backend failure: keep what was said and the work done so far.
+		if err != nil && err.Error() == "max iterations exceeded" && resp != nil {
+			chatCtx.GetLogger().Warn("agent_max_iterations", "iterations", resp.IterationCount)
+			cb.flush()
+			commitExchange(chatCtx.GetSession(),
+				append(takePending(req), redactRefusedArguments(resp.AllMessages)...))
+			logReplies(chatCtx, resp.AllMessages)
+			if !cb.hadContent {
+				output <- outOfSteps
+			}
 			return
 		}
 
@@ -99,6 +146,14 @@ func (p *PollyLLM) ChatCompletionStream(chatCtx core.ChatContextInterface, req *
 
 		commitExchange(chatCtx.GetSession(),
 			append(takePending(req), redactRefusedArguments(resp.AllMessages)...))
+		logReplies(chatCtx, resp.AllMessages)
+		MaybeFold(cfg, chatCtx.GetSession())
+
+		// Still nothing after the retry: say so rather than leave the channel waiting.
+		if cb.silent() {
+			chatCtx.GetLogger().Warn("empty_reply_posted_notice")
+			output <- noAnswer
+		}
 
 		source := chatCtx.GetSource()
 		if score := core.Suspicions().Score(chatCtx.GetNetwork(), source); score >= core.SuspicionQuarantine {
@@ -160,6 +215,7 @@ type callbackHandler struct {
 	lastThinkingTime time.Time
 	toolCount        int
 	announcedTools   map[string]bool
+	refusals         map[string]int      // refusals per tool this request, to stop a refusal loop
 	lastToolURL      string              // most recent "url: ..." a successful tool call handed back this request
 	hadContent       bool                // whether the model's final reply ever wrote any actual content
 	leaked           bool                // this turn emitted tool-call syntax; suppress the rest
@@ -181,6 +237,7 @@ func newCallbackHandler(chatCtx core.ChatContextInterface, chunker *irc.Chunker,
 		cfg:            cfg,
 		startTime:      time.Now(),
 		announcedTools: make(map[string]bool),
+		refusals:       make(map[string]int),
 	}
 }
 
@@ -190,6 +247,7 @@ func (h *callbackHandler) build() *llm.AgentCallbacks {
 		OnContent:         h.onContent,
 		BeforeToolExecute: h.beforeToolExecute,
 		OnToolStart:       h.onToolStart,
+		ApproveToolCalls:  h.approveToolCalls,
 		OnToolEnd:         h.onToolEnd,
 		OnComplete:        h.onComplete,
 		OnError:           h.onError,
@@ -219,6 +277,8 @@ func (h *callbackHandler) onComplete(response *messages.ChatMessage) {
 
 func (h *callbackHandler) onReasoning(content string) {
 	h.chatCtx.GetLogger().Debug("reasoning_chunk", "content", content)
+	core.LiveThinking.Publish(core.LiveEvent{Request: h.chatCtx.GetRequestID(), Network: h.chatCtx.GetNetwork(),
+		Source: h.chatCtx.GetSource(), Target: h.chatCtx.GetTarget(), Text: content})
 
 	if !h.cfg.Bot.ShowThinkingAction {
 		return
@@ -326,6 +386,7 @@ func toolDisplayName(name string) string {
 
 func (h *callbackHandler) onToolStart(calls []messages.ChatMessageToolCall) {
 	h.flush()
+	h.correctToolNames(calls)
 
 	h.toolCount += len(calls)
 
@@ -342,7 +403,7 @@ func (h *callbackHandler) onToolStart(calls []messages.ChatMessageToolCall) {
 	// (e.g. after a failed safety check) shouldn't re-announce "calling X" a second time.
 	var names []string
 	for _, tc := range calls {
-		if tc.Name == "irc__action" {
+		if tc.Name == "irc__action" || core.QuietTool(tc.Name) || !h.toolExists(tc.Name) {
 			continue
 		}
 		displayName := toolDisplayName(tc.Name)
@@ -386,6 +447,21 @@ func (h *callbackHandler) onToolEnd(tc messages.ChatMessageToolCall, result stri
 		"preview", preview,
 	)
 
+	// A plugin posts a /me by starting its result with "action: ".
+	if action, ok := toolAction(result); ok {
+		h.flush()
+		h.chatCtx.ReplyAction(action)
+		recordAction(h.chatCtx.GetRequestID(), action)
+	}
+
+	if isToolRefusal(result) {
+		h.refusals[tc.Name]++
+	}
+
+	// The reply may link to what this tool returned.
+	learnOwnHosts(result)
+	vouchLinks(h.chatCtx.GetRequestID(), result)
+
 	// Remember the last url a tool returned, as a fallback if the model's final reply is empty.
 	if firstLine, ok := strings.CutPrefix(result, "url: "); ok {
 		if nl := strings.IndexByte(firstLine, '\n'); nl != -1 {
@@ -393,6 +469,22 @@ func (h *callbackHandler) onToolEnd(tc messages.ChatMessageToolCall, result stri
 		}
 		h.lastToolURL = strings.TrimSpace(firstLine)
 	}
+}
+
+// maxToolRefusals is how often one tool may refuse a request before the model stops being allowed
+// to call it; past that it only burns iterations asking again.
+const maxToolRefusals = 2
+
+// approveToolCalls denies calls to a tool that has already refused this request twice.
+func (h *callbackHandler) approveToolCalls(calls []messages.ChatMessageToolCall) []bool {
+	ok := make([]bool, len(calls))
+	for i, tc := range calls {
+		ok[i] = h.refusals[tc.Name] < maxToolRefusals
+		if !ok[i] {
+			h.chatCtx.GetLogger().Warn("tool_call_denied_after_refusals", "tool", tc.Name, "refusals", h.refusals[tc.Name])
+		}
+	}
+	return ok
 }
 
 // drainQueued empties a buffered channel without blocking, returning how many items it threw away.
@@ -413,6 +505,18 @@ func isToolRefusal(result string) bool {
 	return strings.HasPrefix(strings.TrimSpace(strings.ToLower(result)), "error: refused")
 }
 
+// noAnswer is what the channel sees when the model twice finished without writing anything.
+const noAnswer = "i went quiet on that one - thought it through and never wrote an answer. ask again, maybe more specifically."
+
+// silent reports whether this turn produced nothing the channel saw: no text, no tool, no fallback
+// link.
+func (h *callbackHandler) silent() bool {
+	return !h.hadContent && h.toolCount == 0 && h.lastToolURL == ""
+}
+
+// outOfSteps is what the channel sees when a request used every tool iteration without answering.
+const outOfSteps = "that took more steps than i'm allowed and i didn't get to an answer. try asking for less at once."
+
 // genericBackendError is what the channel sees when the LLM backend fails.
 const genericBackendError = "something went wrong talking to my backend. try again in a moment."
 
@@ -426,4 +530,38 @@ func CreateAgentForRegistry(client *llm.MultiPass, registry *tools.ToolRegistry,
 		MaxIterations: 10,
 		ToolTimeout:   timeout,
 	})
+}
+
+const maxToolAction = 300
+
+// toolAction extracts the /me text from a tool result whose first line starts
+// with "action: ", stripped of control characters and capped in length.
+func toolAction(result string) (string, bool) {
+	first, _, _ := strings.Cut(result, "\n")
+	text, ok := strings.CutPrefix(first, "action: ")
+	if !ok {
+		return "", false
+	}
+	text = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+	text = strings.TrimSpace(text)
+	if len(text) > maxToolAction {
+		text = strings.TrimSpace(text[:maxToolAction])
+	}
+	return text, text != ""
+}
+
+// toolExists reports whether a call names a registered tool; a misspelled call
+// fails anyway and must not be announced.
+func (h *callbackHandler) toolExists(name string) bool {
+	sys := h.chatCtx.GetSystem()
+	if sys == nil || sys.GetToolRegistry() == nil {
+		return true
+	}
+	_, ok := sys.GetToolRegistry().Get(name)
+	return ok
 }

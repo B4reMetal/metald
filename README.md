@@ -5,12 +5,13 @@
 ## Features
 
 -   **Any model**: OpenAI, Anthropic, Google Gemini, Ollama, or any OpenAI-compatible endpoint.
--   **Tools**: shell and Python plugins, MCP servers, and native IRC tools. Shipped plugins cover web search and page fetch (Exa), code execution in a throwaway Fly.io microVM, image, music, video and speech generation (ComfyUI), speech-to-text, image understanding, Wikipedia, MusicBrainz, YouTube transcripts and pastes; Context7 library docs come over MCP.
+-   **Tools**: shell and Python plugins, MCP servers, and native IRC tools. Shipped plugins cover web search and page fetch (Exa), code execution in a throwaway Fly.io microVM (Python, bash, and C/C++ compiled and run so the bot can check its own code), image, music, video and speech generation (ComfyUI), speech-to-text, image understanding, Wikipedia, MusicBrainz, YouTube transcripts and pastes; Context7 library docs come over MCP.
 -   **Several networks at once**, each with its own nick, channels and conversations. Up to `maxconcurrent` requests (default 3) run at a time across all of them; each request's question and answer are written to history together when it finishes.
 -   **Per-network isolation**: memories, ignores, flood counters, reminders and suspicion scores never cross between networks.
 -   **Screening**: named nicks can be put behind a classifier on the way in (`screennicks`) and have replies checked on the way out (`filternicks`), with a deterministic block on any reply that reproduces the system prompt.
 -   **Injection resistance**: fake `<think>`/tool tags are stripped from input, reasoning the model writes into its reply is filtered, each turn has an output budget, refused tool arguments are removed from history, and a decaying per-speaker suspicion score drops only that speaker's turns.
--   **Persistent memory** (SQLite) with a classifier on every write, so nobody can store an instruction disguised as a fact.
+-   **Persistent memory** (SQLite) with a classifier on every write, so nobody can store an instruction disguised as a fact. Facts about the speaker, and about anyone or anything the message mentions, reach the model without it having to ask.
+-   **Conversations that last**: history is saved and survives restarts. Older turns are folded into a running per-channel recap instead of being dropped, recent channel chatter the bot was not addressed in is passed along with the next request, and past chat is searchable with `history__search`. Screened and ignored nicks are kept out of all of it.
 -   **Runtime control** through `+` commands, persisted across restarts.
 
 ## Quickstart
@@ -41,7 +42,7 @@ They contain the binary, Python 3, curl, jq, ffmpeg, a current yt-dlp and every 
 |---|---|
 | `config.yml` | every setting, including tool secrets under `env:` |
 | `plugins/` | your own plugins, listed in `config.yml` as `custom-plugins/<name>`, the same name they have outside Docker |
-| `data/` | runtime state: the SQLite memory database, reminders, ignores, settings changed at runtime, the tools' error log (`tool-errors.log`), and temp and cache files |
+| `data/` | runtime state: the SQLite memory and conversation databases, reminders, ignores, settings changed at runtime, the tools' error log (`tool-errors.log`), and temp and cache files |
 
 ```bash
 mkdir config
@@ -58,7 +59,7 @@ Everything is set in one file, `config.yml`. Start from `examples/chatbot.yml`, 
 
 -   **Bot settings** are flat top-level keys named after the command-line flags: `nick`, `server`, `channel`, `model`, `tool`, `admins`, and so on. Each one can also be given as `--<name>` or as the environment variable `METALD_<NAME>`; a flag beats the environment, which beats `config.yml`. `./metald --help` lists them all.
 -   **Tool settings** go under `env:`: API keys, service URLs and tool prompts, named as each plugin documents them. The bot passes every entry to every tool it runs as an environment variable. A variable already set in the real environment (for example `docker run -e EXA_API_KEY=...`) takes precedence.
--   **Every prompt is configurable, and none is built in.** Seven are required by the bot itself: `floorprompt`, `gatekeeperpreamble`, `gatekeeperpolicy`, `classifypreamble`, `replyscreenpolicy`, `memorypolicy` and `memoryframe`. The plugins' prompts and safety policies are required settings under `env:`. The bot refuses to start and names anything missing; `examples/chatbot.yml` carries the default text of all of them.
+-   **Every prompt is configurable, and none is built in.** Eighteen are required by the bot itself: `floorprompt`, `gatekeeperpreamble`, `gatekeeperpolicy`, `classifypreamble`, `replyscreenpolicy`, `memorypolicy`, `memoryframe`, `relevantframe`, `recapprompt`, `recapframe`, `backlogframe`, `toolretrynote`, `emptyreplynote`, `taskprompt`, `goalprompt`, `goalroundprompt`, `goalverifyprompt` and `delegateprompt`. The plugins' prompts and safety policies are required settings under `env:`. The bot refuses to start and names anything missing; `examples/chatbot.yml` carries the default text of all of them.
 -   **Changes made at runtime** with `+set`, `+admins`, `+tools restrict` or `+screen` are saved to `config-overrides.json` in the data directory and survive restarts. `config.yml` itself is never rewritten.
 
 A minimal file, with the required prompts omitted for brevity:
@@ -115,7 +116,16 @@ Set `model` to `provider/name`:
 | `model`, `maxtokens`, `temperature` | `ollama/llama3.2`, `16384`, `0.7` | model settings |
 | `apitimeout` | `5m` | limit for one request, tool calls included |
 | `maxconcurrent` | `3` | requests handled at once across all networks |
-| `sessionduration`, `maxcontext` | `10m`, `0` (unlimited) | how long an idle conversation is kept, and its token cap |
+| `sessionduration` | `10m` | after this long idle, a conversation's older turns are folded into its recap (the last 6 turns stay word for word) |
+| `maxcontext` | `0` (unlimited) | history kept word for word, in tokens; past it, the oldest part is folded into the recap |
+| `channelbacklog`, `channelbacklogwindow` | `30`, `20m` | unaddressed channel lines passed along with the next request, and how far back they reach (`0` turns it off) |
+| `recapmax` | `6000` | character limit of a channel recap |
+| `historydays` | `30` | days of chat kept for `history__search` (`0` keeps no chat log) |
+| `maxiterations` | `10` | model calls one request may make, tool rounds included |
+| `taskmaxtime`, `taskmaxiterations`, `taskmaxtokens` | `30m`, `30`, `65536` | budget of one background task; `taskmaxtokens` is the output one model call in it may produce, thinking included |
+| `taskdailylimit`, `taskmaxactive` | `3`, `1` | per-nick task limits for non-admins (`taskdailylimit: 0` makes tasks admin-only) |
+| `goalmaxruns`, `goalmaxtime`, `goaldeadline` | `20`, `60m`, `24h` | budget of one goal |
+| `goalupdateinterval` | `5m` | least time between a goal's progress lines |
 | `screennicks`, `filternicks` | | nicks screened on the way in and on the way out |
 | `floodmessages`, `floodwindow`, `floodtimeout` | `5`, `30s`, `5m` | automatic timeout for floods |
 | `tool`, `admintools` | | tools to load, and tools only admins may trigger |
@@ -123,6 +133,19 @@ Set `model` to `provider/name`:
 | `urlwatcher` | off | comment on links posted in the channel |
 | `sandbox` | off | run shell, bash and MCP tools in a platform sandbox |
 | `verbose`, `loglevel`, `logformat` | off, `info`, `text` | logging |
+
+## Operator page
+
+Set `adminlisten` (e.g. `127.0.0.1:8766`) and `admintoken` and the bot serves a private operator page:
+uptime and what it is working on right now (each request, waiting or running, and for how long); the GPU
+queue job by job (what made it, its prompt, how long it has waited or run) with **Stop/Remove**, which the
+tool reports as a cancellation rather than a failure to retry; the radio; every task, goal and schedule per
+network with **Cancel** (stops a running round, like `+task cancel`) and **Pause/Resume work**; pending
+reminders with **Cancel**; and live **Logs** and the model's **Thinking** as it streams, held in memory only
+(reasoning is never saved to conversation history). It stays off
+unless both settings are set; every API call needs `Authorization: Bearer <admintoken>`, and every change
+is logged (`admin_request`). Keep it on localhost or a private network. Behind an auth proxy (e.g. Traefik forward auth with Authentik), set `admintrustedproxies` and `adminusers` and signed-in users get in without the token. The page is a Svelte app in
+`web/admin`, built into `internal/admin/dist` and embedded in the binary; its JSON API is under `/api/v1`.
 
 ## Plugins
 
@@ -134,8 +157,8 @@ Plugins are optional; the bot starts with none. An enabled plugin must have ever
 | plugin | requires under `env:` | also reads |
 |---|---|---|
 | `websearch`, `webfetch` | `EXA_API_KEY` | |
-| `sandbox` | `FLY_API_TOKEN`, `SANDBOX_SAFETY_POLICY` | `FLY_SANDBOX_APP`, `FLY_SANDBOX_REGION` |
-| `imagegen` | `IMAGE_SAFETY_PROMPT`, `IMAGE_PROMPT_REFINER`, file hosting (below) | `COMFYUI_URL`, `VISION_API_URL` for the safety check |
+| `sandbox` | `FLY_API_TOKEN`, `SANDBOX_SAFETY_POLICY` | `FLY_SANDBOX_APP`, `FLY_SANDBOX_REGION`, `SANDBOX_IMAGE`, `SANDBOX_C_IMAGE` (the compiler image for `c` and `cpp`, default `gcc:14`) |
+| `imagegen` | `IMAGE_SAFETY_PROMPT`, `IMAGE_PROMPT_REFINER`, file hosting (below) | `COMFYUI_URL`, `VISION_API_URL` for the safety check, `IMAGE_GEN_NEGATIVE` (a negative prompt for every image) and `IMAGE_GEN_NEGATIVE_CFG` (guidance when a negative is used, default `2.5`; roughly doubles render time) |
 | `musicgen` | `MUSIC_SAFETY_POLICY`, `LYRICIST_PROMPT`, `LYRICIST_FORMAT`, file hosting | `COMFYUI_URL`, `SAFETY_REVIEW_URL` |
 | `videogen` | `VIDEO_SAFETY_POLICY`, `VIDEO_NEGATIVE_PROMPT`, file hosting; `ffmpeg` on PATH | `COMFYUI_URL`, `SAFETY_REVIEW_URL` |
 | `tts` | file hosting | `COMFYUI_URL`, `TTS_VOICES` |
@@ -165,7 +188,16 @@ Commands start with the command prefix, `+` by default (`commandprefix: "!"` to 
 | `+help` | | list commands |
 | `+version` | | show the version |
 | `+stats` | | show this conversation's size and token use |
-| `+reset` | | clear this channel's conversation, custom persona and model switch |
+| `+reset` | | clear this channel's conversation, custom persona and model switch; the channel recap is kept |
+| `+task <what to do>` / `+tasks` | quota for non-admins | start a background task, or list them; `+task result <id>` shows a result, `+task cancel <id>` stops one (its owner or an admin) |
+| `+task pause` / `+task resume` | admin | stop starting background work, or carry on |
+| `+goal <objective> [done when: <criteria>]` | quota for non-admins | work on something in rounds until a reviewer confirms the criteria are met; `+goal status <id>` shows its round, checklist and last review, `+goal nudge <id> <hint>` steers its next round, `+goal accept <id>` starts a goal the bot proposed, `+goal cancel <id>` stops it |
+| `+schedule in <30m\|2h\|1d> <what to do>` | quota for non-admins | run something once, later |
+| `+schedule every <2h> <...>` / `+schedule daily <HH:MM> <...>` | admin | run something on repeat (at most every 15 minutes; times are UTC); `+schedule cancel <id>` stops it |
+| `+recap` / `+recap clear` | admin | post this channel's recap as a paste (inline if no paste tool is loaded), or delete it |
+| `+suspicion` / `+suspicion <nick>` | anyone | show the decaying per-speaker suspicion scores on this network, highest first, or one nick's score |
+| `+np` | anyone | say what the web radio is playing (reads `RADIO_API_URL` / `RADIO_PAGE_URL`) |
+| `+skip` | anyone | skip the web radio's current track; one skip per 20 seconds across everyone (reads `RADIO_API_URL` / `RADIO_TOKEN`) |
 | `+prompt <text>` | | set a custom persona for this channel; it disables every tool until `+reset`. No argument shows the current state |
 | `+memories` / `+memories about <nick>` | | list stored memories |
 | `+memories clear <nick>` / `+memories forget <id>` | own memories only | clear all memories about a nick, or delete one; admins may do either for anyone |
@@ -189,6 +221,12 @@ These run inside the bot and are listed in `tool:` by name:
 -   `irc__ignore`: let the bot mute someone itself, for at most an hour. Admins can't be muted.
 -   `irc__remind`, `irc__reminders`: schedule, list and cancel reminders.
 -   `memory__remember`, `memory__recall`, `memory__forget`: the bot's long-term memory, checked by `memorypolicy` on every write.
+-   `history__search`: search what was said in this channel over the last `historydays`, including lines not addressed to the bot. Private messages are never logged.
+-   `task__start`: background work. Enabling it also loads:
+    -   `task__schedule` (do something once, later) and `goal__propose` (suggest a goal the person accepts with `+goal accept`);
+    -   `todo__set`, `todo__update` and `task__note`, which exist only inside background work and keep its checklist and notes, and `task__delegate`, which hands a focused sub-question to a helper with its own short budget and returns the answer to the work (one at a time, so background work never holds more than two model slots; a helper cannot delegate further).
+
+    Background work runs apart from the conversation with its own budget (`taskmaxtime`, `taskmaxiterations`), one round at a time per network, resumes after a restart, and posts its result where it was asked for (long results as a paste). A goal runs in rounds; after each one a reviewer (`goalverifyprompt`) checks what the round actually did against the goal's criteria and either passes it, sends it back with feedback, or stops it. Background work never gets the channel-management tools and cannot start more background work.
 
 ## Sandboxing
 

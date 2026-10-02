@@ -13,6 +13,13 @@ A plugin is any executable that answers two calls:
   missing `requires` entry stops the bot at startup.
 - `./tool.py --execute '<json args>'` runs it and prints the result.
 
+Two optional extras:
+
+- A result whose first line starts with `action: ` is posted to the channel as a
+  `/me`; the rest of the result goes to the model as usual.
+- `"announce": false` in the schema keeps the "calling <tool>" line out of the
+  channel, for tools whose output is itself the visible effect.
+
 List it in `config.yml` under `tool:` as `custom-plugins/tool.py`, in Docker
 too. Make it executable.
 

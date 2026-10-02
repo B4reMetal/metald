@@ -1,0 +1,12 @@
+services:
+  # Gives the radio's songs read-along lyrics (contrib/radio), through the lyric nodes in ComfyUI
+  # (comfyui/ here, installed as a custom node). Needs RADIO_API_URL and RADIO_TOKEN in .env.
+  lyricworker:
+    build: .
+    restart: unless-stopped
+    # ComfyUI listens on the host's 127.0.0.1.
+    network_mode: host
+    environment:
+      RADIO_API_URL: ${RADIO_API_URL:?}
+      RADIO_TOKEN: ${RADIO_TOKEN:?}
+      COMFYUI_URL: ${COMFYUI_URL:-http://127.0.0.1:8188}
